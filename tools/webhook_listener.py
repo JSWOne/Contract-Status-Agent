@@ -46,6 +46,53 @@ def health():
     return make_response("OK", 200)
 
 
+@app.route("/screenshot", methods=["GET"])
+def screenshot():
+    """Navigate to Salesforce login and return a screenshot so you can see what Chromium sees."""
+    import base64, asyncio
+    from flask import make_response as _make_response
+    from playwright.sync_api import sync_playwright as _pw
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    try:
+        pw  = _pw().start()
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        ctx = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+        )
+        page = ctx.new_page()
+        sf_url = os.environ.get("SALESFORCE_URL", "https://jswsteel.my.site.com/jswone/s/login")
+        page.goto(sf_url, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(8_000)
+
+        title   = page.title()
+        url     = page.url
+        text    = (page.evaluate("() => document.body.innerText") or "").strip()[:800]
+        png_b64 = base64.b64encode(page.screenshot(full_page=True)).decode()
+
+        browser.close()
+        pw.stop()
+
+        html = f"""<!DOCTYPE html><html><head><title>Salesforce Screenshot</title></head><body>
+<b>URL:</b> {url}<br><b>Title:</b> {title}<br>
+<pre style="background:#f5f5f5;padding:8px;white-space:pre-wrap">{text}</pre>
+<img src="data:image/png;base64,{png_b64}" style="max-width:100%;border:1px solid #ccc">
+</body></html>"""
+        resp = _make_response(html, 200)
+        resp.headers["Content-Type"] = "text/html"
+        return resp
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
 @app.route("/test-browser", methods=["GET"])
 def test_browser():
     import time as _time

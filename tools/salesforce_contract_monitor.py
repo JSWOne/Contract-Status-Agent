@@ -329,7 +329,7 @@ def _do_login() -> None:
     ], timeout=15_000)
     if button is None:
         _raise_login_form_error("login button")
-    button.click()
+    _submit_login(button, password)
 
     _screenshot("monitor_after_login_click")
     _page.wait_for_timeout(3_000)  # allow redirect chain to start
@@ -345,6 +345,31 @@ def _do_login() -> None:
 
     log.info("[monitor] Login successful. URL: %s", _page.url)
     _screenshot("monitor_logged_in")
+
+
+def _submit_login(button, password) -> None:
+    """Submit Salesforce login with fallbacks for headless Cloud Run clicks."""
+    attempts = [
+        ("normal click", lambda: button.click(timeout=5_000)),
+        ("forced click", lambda: button.click(timeout=5_000, force=True)),
+        ("DOM click", lambda: button.evaluate("(el) => el.click()")),
+        ("password Enter", lambda: password.press("Enter", timeout=5_000)),
+    ]
+
+    last_error = None
+    for label, action in attempts:
+        try:
+            log.info("[monitor] Submitting login via %s", label)
+            action()
+            _page.wait_for_timeout(3_000)
+            if "/login" not in (_page.url or "").lower():
+                log.info("[monitor] Login submit succeeded via %s", label)
+                return
+        except Exception as exc:
+            last_error = exc
+            log.warning("[monitor] Login submit via %s failed: %s", label, exc)
+
+    _raise_login_form_error(f"login submit action; last error: {last_error}")
 
 
 def _validate_required_env() -> None:
@@ -388,7 +413,8 @@ def _first_visible_locator(selectors: list, timeout: int):
 
 def _raise_login_form_error(missing_part: str) -> None:
     """Capture enough page state to diagnose Cloud Run/Salesforce login issues."""
-    _screenshot(f"monitor_login_missing_{missing_part.replace(' ', '_')}")
+    safe_part = "".join(ch if ch.isalnum() else "_" for ch in missing_part)[:80]
+    _screenshot(f"monitor_login_missing_{safe_part}")
     try:
         title = _page.title()
     except Exception:

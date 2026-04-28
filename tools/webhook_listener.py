@@ -51,6 +51,45 @@ def health():
     return make_response("OK", 200)
 
 
+@app.route("/test-browser", methods=["GET"])
+def test_browser():
+    import time as _time
+    from playwright.sync_api import sync_playwright
+    import asyncio
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    results = {}
+    try:
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        page = browser.new_page()
+
+        # Test 1: Google — confirms Chromium launches and internet works
+        t0 = _time.time()
+        try:
+            page.goto("https://www.google.com", wait_until="commit", timeout=30_000)
+            results["google"] = {"ok": True, "title": page.title(), "ms": int((_time.time() - t0) * 1000)}
+        except Exception as e:
+            results["google"] = {"ok": False, "error": str(e)}
+
+        # Test 2: Salesforce login page — confirms if GCP IP is blocked
+        t0 = _time.time()
+        try:
+            page.goto("https://jswsteel.my.site.com/jswone/s/login", wait_until="commit", timeout=60_000)
+            results["salesforce"] = {"ok": True, "url": page.url, "ms": int((_time.time() - t0) * 1000)}
+        except Exception as e:
+            results["salesforce"] = {"ok": False, "error": str(e)}
+
+        browser.close()
+        pw.stop()
+    except Exception as e:
+        results["chromium_launch"] = {"ok": False, "error": str(e)}
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Contract Status monitor — background thread
 # ---------------------------------------------------------------------------

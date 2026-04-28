@@ -283,7 +283,10 @@ def _navigate_and_login_if_needed() -> None:
 
 def _do_login() -> None:
     """Fill and submit the Salesforce login form. Page is already on login URL."""
-    _page.wait_for_selector('input[placeholder="Username"]', timeout=60_000)
+    # wait_until="commit" only guarantees the HTTP response started — the login
+    # form is rendered by JavaScript which can take 2-3 min to download and run
+    # on a cold GCP connection. 300s gives enough headroom for any realistic case.
+    _page.wait_for_selector('input[placeholder="Username"]', timeout=300_000)
     _page.locator('input[placeholder="Username"]').fill(os.environ["SALESFORCE_USERNAME"])
     _page.locator('input[type="password"]').fill(os.environ["SALESFORCE_PASSWORD"])
 

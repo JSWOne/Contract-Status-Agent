@@ -214,12 +214,18 @@ def scrape_all_contracts() -> dict:
 
     # Wait for the table to actually populate (Salesforce LWC can be slow after idle)
     try:
-        _page.wait_for_selector("table tbody tr", timeout=30_000)
+        _page.wait_for_selector("table tbody tr", timeout=60_000)
     except Exception:
-        log.warning("[monitor] Contracts table empty after navigation — re-initialising session")
-        initialize_session()
-        _page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
-        _page.wait_for_timeout(8_000)
+        current_url = _page.url or ""
+        if "/login" in current_url.lower():
+            log.warning("[monitor] Session expired during navigation — re-authenticating")
+            _do_login()
+            _context.storage_state(path=SESSION_FILE)
+            _page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
+            _page.wait_for_timeout(8_000)
+        else:
+            log.warning("[monitor] Contracts table not visible after 65s (URL: %s) — continuing", current_url)
+            _screenshot("monitor_table_empty")
 
     _screenshot("monitor_list_loaded")
 
@@ -251,7 +257,8 @@ def scrape_all_contracts() -> dict:
 # ---------------------------------------------------------------------------
 
 def _navigate_and_login_if_needed() -> None:
-    """Always start from the login page (lightweight), then navigate to contracts."""
+    """Check session validity via login URL; authenticate if needed.
+    Does NOT navigate to the contracts page — scrape_all_contracts() does that once."""
     _page.goto(os.environ["SALESFORCE_URL"], wait_until="commit", timeout=120_000)
     _page.wait_for_timeout(8_000)
 
@@ -261,11 +268,7 @@ def _navigate_and_login_if_needed() -> None:
         _context.storage_state(path=SESSION_FILE)
         log.info("[monitor] Session saved to %s", SESSION_FILE)
     else:
-        log.info("[monitor] Session still valid.")
-
-    _page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
-    _page.wait_for_timeout(5_000)
-    _screenshot("monitor_contracts_page")
+        log.info("[monitor] Session still valid. URL: %s", _page.url)
 
 
 def _do_login() -> None:

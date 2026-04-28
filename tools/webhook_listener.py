@@ -103,10 +103,12 @@ def _start_contract_monitor() -> None:
 def _monitor_watcher() -> None:
     import subprocess, sys
     script = os.path.join(os.path.dirname(__file__), "salesforce_contract_monitor.py")
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"   # ensure subprocess logs flush immediately
     while True:
         log.info("[monitor] Spawning monitor subprocess: %s", script)
         try:
-            proc = subprocess.Popen([sys.executable, script])
+            proc = subprocess.Popen([sys.executable, "-u", script], env=env)
             proc.wait()
             log.error("[monitor] Monitor subprocess exited (rc=%d) — restarting in 30 s.",
                       proc.returncode)

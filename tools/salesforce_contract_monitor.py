@@ -259,7 +259,9 @@ def scrape_all_contracts() -> dict:
 def _navigate_and_login_if_needed() -> None:
     """Check session validity via login URL; authenticate if needed.
     Does NOT navigate to the contracts page — scrape_all_contracts() does that once."""
-    _page.goto(os.environ["SALESFORCE_URL"], wait_until="commit", timeout=120_000)
+    _validate_required_env()
+
+    _page.goto(os.environ["SALESFORCE_URL"], wait_until="domcontentloaded", timeout=120_000)
     _page.wait_for_timeout(8_000)
 
     if "/login" in _page.url.lower():
@@ -286,19 +288,48 @@ def _do_login() -> None:
     # wait_until="commit" only guarantees the HTTP response started — the login
     # form is rendered by JavaScript which can take 2-3 min to download and run
     # on a cold GCP connection. 300s gives enough headroom for any realistic case.
-    _page.wait_for_selector('input[placeholder="Username"]', timeout=300_000)
-    _page.locator('input[placeholder="Username"]').fill(os.environ["SALESFORCE_USERNAME"])
-    _page.locator('input[type="password"]').fill(os.environ["SALESFORCE_PASSWORD"])
+    username = _first_visible_locator([
+        'input[placeholder="Username"]',
+        'input[placeholder*="Username"]',
+        'input[placeholder*="Email"]',
+        'input[name="username"]',
+        'input[name="UserName"]',
+        'input#username',
+        'input[type="email"]',
+        'input[autocomplete="username"]',
+        'input[aria-label*="Username"]',
+        'input[aria-label*="Email"]',
+        'input:not([type="hidden"]):not([type="password"])',
+    ], timeout=300_000)
+    if username is None:
+        _raise_login_form_error("username field")
+
+    password = _first_visible_locator([
+        'input[type="password"]',
+        'input[name="pw"]',
+        'input[name="password"]',
+        'input#password',
+        'input[autocomplete="current-password"]',
+        'input[aria-label*="Password"]',
+    ], timeout=60_000)
+    if password is None:
+        _raise_login_form_error("password field")
+
+    username.fill(os.environ["SALESFORCE_USERNAME"])
+    password.fill(os.environ["SALESFORCE_PASSWORD"])
 
     # Try button selectors in order — Salesforce sometimes renders "Log in" or "Login"
-    for selector in ['button:has-text("Log in")', 'button:has-text("Login")', 'button[type="submit"]']:
-        try:
-            btn = _page.locator(selector).first
-            if btn.is_visible(timeout=3_000):
-                btn.click()
-                break
-        except Exception:
-            continue
+    button = _first_visible_locator([
+        'button:has-text("Log in")',
+        'button:has-text("Login")',
+        'button[type="submit"]',
+        'input[type="submit"]',
+        '[role="button"]:has-text("Log in")',
+        '[role="button"]:has-text("Login")',
+    ], timeout=15_000)
+    if button is None:
+        _raise_login_form_error("login button")
+    button.click()
 
     _screenshot("monitor_after_login_click")
     _page.wait_for_timeout(3_000)  # allow redirect chain to start
@@ -314,6 +345,80 @@ def _do_login() -> None:
 
     log.info("[monitor] Login successful. URL: %s", _page.url)
     _screenshot("monitor_logged_in")
+
+
+def _validate_required_env() -> None:
+    missing = [
+        name for name in (
+            "SALESFORCE_URL",
+            "SALESFORCE_USERNAME",
+            "SALESFORCE_PASSWORD",
+        )
+        if not os.environ.get(name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variable(s): "
+            + ", ".join(missing)
+            + ". Set them on the Cloud Run service before starting the monitor."
+        )
+
+
+def _first_visible_locator(selectors: list, timeout: int):
+    """Return the first visible locator from a selector list, waiting up to timeout."""
+    deadline = datetime.now() + timedelta(milliseconds=timeout)
+    last_error = None
+
+    while datetime.now() < deadline:
+        for selector in selectors:
+            try:
+                locator = _page.locator(selector).first
+                if locator.is_visible(timeout=1_000):
+                    log.info("[monitor] Login selector matched: %s", selector)
+                    return locator
+            except Exception as exc:
+                last_error = exc
+                continue
+        _page.wait_for_timeout(1_000)
+
+    if last_error:
+        log.warning("[monitor] Last selector lookup error: %s", last_error)
+    return None
+
+
+def _raise_login_form_error(missing_part: str) -> None:
+    """Capture enough page state to diagnose Cloud Run/Salesforce login issues."""
+    _screenshot(f"monitor_login_missing_{missing_part.replace(' ', '_')}")
+    try:
+        title = _page.title()
+    except Exception:
+        title = ""
+    try:
+        body_text = (_page.evaluate("() => document.body.innerText") or "").strip()[:1200]
+    except Exception:
+        body_text = ""
+    try:
+        inputs = _page.evaluate("""
+            () => Array.from(document.querySelectorAll('input, button')).slice(0, 30).map(el => ({
+                tag: el.tagName,
+                type: el.getAttribute('type') || '',
+                id: el.id || '',
+                name: el.getAttribute('name') || '',
+                placeholder: el.getAttribute('placeholder') || '',
+                aria: el.getAttribute('aria-label') || '',
+                text: (el.innerText || el.value || '').slice(0, 80),
+            }))
+        """)
+    except Exception:
+        inputs = []
+
+    log.error("[monitor] Login page diagnostics: url=%s title=%s inputs=%s body=%r",
+              _page.url, title, inputs, body_text)
+    raise RuntimeError(
+        f"Salesforce login page loaded, but the {missing_part} was not visible. "
+        f"URL: {_page.url}. Check Cloud Run logs for login page diagnostics; "
+        "Salesforce may be showing a bot challenge, SSO/MFA page, or a different login template."
+    )
 
 
 def _ensure_session_valid() -> None:

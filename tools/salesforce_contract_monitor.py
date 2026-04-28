@@ -64,6 +64,15 @@ def initialize_session() -> None:
     """
     global _pw, _browser, _context, _page
 
+    # Clean up any previous Playwright instance — its internal event loop
+    # must be stopped before starting a new one or Playwright raises asyncio conflict.
+    if _pw is not None:
+        try:
+            _pw.stop()
+        except Exception:
+            pass
+        _pw = None
+
     os.makedirs(DEBUG_DIR, exist_ok=True)
     log.info("[monitor] Initialising Salesforce session…")
 

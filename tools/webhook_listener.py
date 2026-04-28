@@ -93,6 +93,70 @@ def screenshot():
         return {"error": str(e)}, 500
 
 
+@app.route("/test-login", methods=["GET"])
+def test_login():
+    """Fill Salesforce credentials and screenshot what happens after clicking Login."""
+    import base64, asyncio, os as _os
+    from flask import make_response as _make_response
+    from playwright.sync_api import sync_playwright as _pw
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    steps = []
+    try:
+        pw  = _pw().start()
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        ctx = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+        )
+        page = ctx.new_page()
+        sf_url  = _os.environ.get("SALESFORCE_URL", "")
+        sf_user = _os.environ.get("SALESFORCE_USERNAME", "")
+        sf_pass = _os.environ.get("SALESFORCE_PASSWORD", "")
+
+        page.goto(sf_url, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(8_000)
+        steps.append(("After page load", page.url, base64.b64encode(page.screenshot()).decode()))
+
+        page.wait_for_selector('input[placeholder="Username"]', timeout=30_000)
+        page.locator('input[placeholder="Username"]').fill(sf_user)
+        page.locator('input[type="password"]').fill(sf_pass)
+        steps.append(("After filling credentials", page.url, base64.b64encode(page.screenshot()).decode()))
+
+        for sel in ['button:has-text("Log in")', 'button:has-text("Login")', 'button[type="submit"]']:
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=2_000):
+                    btn.click()
+                    break
+            except Exception:
+                continue
+
+        page.wait_for_timeout(8_000)
+        steps.append(("8s after clicking Login", page.url, base64.b64encode(page.screenshot()).decode()))
+
+        browser.close()
+        pw.stop()
+
+        imgs = "".join(
+            f"<h3>{label}</h3><p>URL: {url}</p>"
+            f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border:1px solid #ccc;margin-bottom:20px"><br>'
+            for label, url, b64 in steps
+        )
+        resp = _make_response(f"<!DOCTYPE html><html><body>{imgs}</body></html>", 200)
+        resp.headers["Content-Type"] = "text/html"
+        return resp
+    except Exception as e:
+        return {"error": str(e), "steps_completed": [s[0] for s in steps]}, 500
+
+
 @app.route("/test-browser", methods=["GET"])
 def test_browser():
     import time as _time

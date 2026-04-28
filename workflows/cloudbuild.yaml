@@ -48,3 +48,5 @@ steps:
       - "--no-cpu-throttling"   # ✅ important for polling thread
       - "--set-env-vars"
       - "PORT=8080,TEAMS_CONTRACT_STATUS_WEBHOOK_URL=${_WEBHOOK_URL}"
+options:
+  logging: CLOUD_LOGGING_ONLY      

@@ -252,7 +252,7 @@ def scrape_all_contracts() -> dict:
 
 def _navigate_and_login_if_needed() -> None:
     """Always start from the login page (lightweight), then navigate to contracts."""
-    _page.goto(os.environ["SALESFORCE_URL"], wait_until="domcontentloaded", timeout=120_000)
+    _page.goto(os.environ["SALESFORCE_URL"], wait_until="commit", timeout=120_000)
     _page.wait_for_timeout(8_000)
 
     if "/login" in _page.url.lower():

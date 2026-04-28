@@ -200,8 +200,18 @@ def scrape_all_contracts() -> dict:
     _ensure_session_valid()
 
     log.info("[monitor] Navigating to contracts list…")
-    _page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
+    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=120_000)
     _page.wait_for_timeout(5_000)
+
+    # Wait for the table to actually populate (Salesforce LWC can be slow after idle)
+    try:
+        _page.wait_for_selector("table tbody tr", timeout=30_000)
+    except Exception:
+        log.warning("[monitor] Contracts table empty after navigation — re-initialising session")
+        initialize_session()
+        _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=120_000)
+        _page.wait_for_timeout(8_000)
+
     _screenshot("monitor_list_loaded")
 
     _sort_created_date_desc()

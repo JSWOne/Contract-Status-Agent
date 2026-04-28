@@ -409,24 +409,17 @@ def _sort_created_date_desc() -> None:
 
 def _load_all_records(date_cutoff=None) -> None:
     """
-    Click 'Load More' until all records within date_cutoff are visible.
-
-    NO window.scrollTo() — scrolling triggers Salesforce LWC's IntersectionObserver
-    which fires slow XHR calls that block the browser JS thread for minutes, causing
-    every subsequent Playwright call to queue behind them. The explicit Load More
-    button fires a targeted, faster API call and does not block the thread.
-
-    After each click we use wait_for_function (polling) to detect when the new rows
-    actually appear, rather than a fixed sleep that may be too short or too long.
+    Scroll down to trigger Salesforce's infinite-scroll and load all records
+    within date_cutoff. Uses wait_for_function (polling) instead of a fixed
+    sleep so we wait exactly as long as the XHR takes — no more, no less.
     """
-    MAX_ITER = 50
-    prev_row_count = 0
+    MAX_ITER = 100
 
     for i in range(MAX_ITER):
         current_row_count = _page.locator("table tbody tr").count()
         log.info("[monitor] Row count (iter %d): %d", i + 1, current_row_count)
 
-        # Early-stop: last row older than 2-week cutoff → no need to load more
+        # Early-stop: last row older than 2-week cutoff
         if date_cutoff is not None and current_row_count > 0:
             try:
                 last_date_str = _page.evaluate("""
@@ -435,8 +428,7 @@ def _load_all_records(date_cutoff=None) -> None:
                         const last = rows[rows.length - 1];
                         if (!last) return '';
                         const dateRe = /\\d{2}\\/\\d{2}\\/\\d{4}/;
-                        const cells = Array.from(last.querySelectorAll('td')).reverse();
-                        for (const cell of cells) {
+                        for (const cell of Array.from(last.querySelectorAll('td')).reverse()) {
                             const t = (cell.textContent || '').trim();
                             if (dateRe.test(t)) return t;
                         }
@@ -452,38 +444,27 @@ def _load_all_records(date_cutoff=None) -> None:
             except Exception:
                 pass
 
-        # Single JS evaluate finds and clicks Load More — avoids 8 CSS-selector
-        # is_visible() calls that each block while the browser JS thread is busy.
-        # Match "Load More", "Load 50 More", "Load 25 More", "Show More", etc.
-        clicked = _page.evaluate("""
+        # Scroll to trigger the infinite-scroll XHR
+        _page.evaluate("""
             () => {
-                const btn = Array.from(document.querySelectorAll('button, a')).find(el => {
-                    const t = (el.textContent || el.title || '').trim().toLowerCase();
-                    return (t.includes('load') && t.includes('more')) || t.includes('show more');
-                });
-                if (btn) { btn.scrollIntoView(); btn.click(); return true; }
-                return false;
+                window.scrollTo(0, document.body.scrollHeight);
+                const el = document.querySelector('.slds-scrollable_y, .forceListViewManagerBody');
+                if (el) el.scrollTop = el.scrollHeight;
             }
         """)
 
-        if not clicked and current_row_count == prev_row_count:
+        # Wait until new rows actually appear — handles any XHR latency automatically
+        try:
+            _page.wait_for_function(
+                f"() => document.querySelectorAll('table tbody tr').length > {current_row_count}",
+                timeout=120_000,
+            )
+        except Exception:
+            # No new rows after 120s → all records are loaded
             log.info("[monitor] All records loaded: %d rows (%d iterations)",
                      current_row_count, i + 1)
             _screenshot("monitor_load_done")
             break
-
-        if clicked:
-            log.info("[monitor] Load More clicked (iter %d) — waiting for new rows…", i + 1)
-            try:
-                _page.wait_for_function(
-                    f"() => document.querySelectorAll('table tbody tr').length > {current_row_count}",
-                    timeout=120_000,
-                )
-            except Exception:
-                log.warning("[monitor] Row count did not increase after 120s — stopping pagination")
-                break
-
-        prev_row_count = current_row_count
 
 
 def _get_column_map() -> dict:

@@ -62,6 +62,11 @@ def _start_contract_monitor() -> None:
 
 
 def _contract_monitor_loop() -> None:
+    # Playwright Sync API cannot run inside an asyncio event loop.
+    # Flask on Cloud Run creates one — give this thread its own clean loop.
+    import asyncio
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
     POLL_INTERVAL = 15 * 60
     RETRY_DELAY   =  5 * 60
 

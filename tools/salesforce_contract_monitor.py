@@ -409,52 +409,24 @@ def _sort_created_date_desc() -> None:
 
 def _load_all_records(date_cutoff=None) -> None:
     """
-    Scroll page (window + internal Salesforce containers) and click 'Load More'
-    until all records are visible or the last visible row is older than date_cutoff.
+    Click 'Load More' until all records within date_cutoff are visible.
 
-    date_cutoff : datetime — stop loading once the bottommost row's Created Date
-                  is before this value (assumes list is sorted newest-first).
-                  The date is found by scanning all cells for DD/MM/YYYY pattern,
-                  so no fixed column index is required.
+    NO window.scrollTo() — scrolling triggers Salesforce LWC's IntersectionObserver
+    which fires slow XHR calls that block the browser JS thread for minutes, causing
+    every subsequent Playwright call to queue behind them. The explicit Load More
+    button fires a targeted, faster API call and does not block the thread.
+
+    After each click we use wait_for_function (polling) to detect when the new rows
+    actually appear, rather than a fixed sleep that may be too short or too long.
     """
-    MAX_ITER       = 200
+    MAX_ITER = 50
     prev_row_count = 0
 
     for i in range(MAX_ITER):
-        # Scroll window AND every inner Salesforce scrollable container
-        _page.evaluate("""
-            () => {
-                window.scrollTo(0, document.body.scrollHeight);
-                const selectors = [
-                    '.slds-scrollable_y', '[class*="scrollable"]',
-                    '.forceListViewManagerBody', '.slds-card__body',
-                    'c-record-list-view', '.forceSectionedPageBody',
-                ];
-                selectors.forEach(sel =>
-                    document.querySelectorAll(sel).forEach(el => {
-                        el.scrollTop = el.scrollHeight;
-                    })
-                );
-                // Walk up from the table and scroll every ancestor
-                const tbl = document.querySelector('table');
-                if (tbl) {
-                    let p = tbl.parentElement;
-                    while (p && p !== document.body) {
-                        p.scrollTop = p.scrollHeight;
-                        p = p.parentElement;
-                    }
-                }
-            }
-        """)
-        _page.wait_for_timeout(2_000)
-
         current_row_count = _page.locator("table tbody tr").count()
-        log.info("[monitor] Row count after scroll (iter %d): %d", i + 1, current_row_count)
+        log.info("[monitor] Row count (iter %d): %d", i + 1, current_row_count)
 
-        # Early-stop: if list is sorted newest-first and the last row is already
-        # older than our cutoff, there's no point loading more pages.
-        # Scan ALL cells of the last row for a date-like value (DD/MM/YYYY)
-        # so we never depend on a fixed column index.
+        # Early-stop: last row older than 2-week cutoff → no need to load more
         if date_cutoff is not None and current_row_count > 0:
             try:
                 last_date_str = _page.evaluate("""
@@ -462,11 +434,10 @@ def _load_all_records(date_cutoff=None) -> None:
                         const rows = document.querySelectorAll('table tbody tr');
                         const last = rows[rows.length - 1];
                         if (!last) return '';
-                        const cells = Array.from(last.querySelectorAll('td'));
-                        // Find the rightmost cell whose text looks like a date
                         const dateRe = /\\d{2}\\/\\d{2}\\/\\d{4}/;
-                        for (let i = cells.length - 1; i >= 0; i--) {
-                            const t = (cells[i].innerText || '').trim();
+                        const cells = Array.from(last.querySelectorAll('td')).reverse();
+                        for (const cell of cells) {
+                            const t = (cell.textContent || '').trim();
                             if (dateRe.test(t)) return t;
                         }
                         return '';
@@ -474,61 +445,42 @@ def _load_all_records(date_cutoff=None) -> None:
                 """)
                 last_date = _parse_date(last_date_str)
                 if last_date and last_date < date_cutoff:
-                    log.info("[monitor] Last row date '%s' is before 2-week cutoff — stopping pagination after %d rows",
+                    log.info("[monitor] Reached 2-week cutoff at '%s' — %d rows loaded",
                              last_date_str, current_row_count)
                     _screenshot("monitor_load_done")
                     break
             except Exception:
-                pass  # if check fails, continue loading normally
+                pass
 
-        # Try all known 'Load More' button variants via CSS selectors
-        clicked = False
-        for selector in [
-            'button:has-text("Load More")',
-            'button:has-text("load more")',
-            'button:has-text("Show More")',
-            'button:has-text("Load 50 More")',
-            'button:has-text("Load 25 More")',
-            'button[title*="Load More"]',
-            'a:has-text("Load More")',
-            'lightning-button:has-text("Load More")',
-        ]:
-            try:
-                btn = _page.locator(selector).first
-                if btn.is_visible(timeout=1_000):
-                    btn.scroll_into_view_if_needed()
-                    btn.click()
-                    _page.wait_for_timeout(2_500)
-                    clicked = True
-                    log.info("[monitor] 'Load More' clicked via CSS (iter %d)", i + 1)
-                    break
-            except Exception:
-                continue
+        # Single JS evaluate finds and clicks Load More — avoids 8 CSS-selector
+        # is_visible() calls that each block while the browser JS thread is busy.
+        clicked = _page.evaluate("""
+            () => {
+                const btn = Array.from(document.querySelectorAll('button, a')).find(el => {
+                    const t = (el.textContent || el.title || '').trim().toLowerCase();
+                    return t.includes('load more') || t.includes('show more');
+                });
+                if (btn) { btn.scrollIntoView(); btn.click(); return true; }
+                return false;
+            }
+        """)
 
-        # Fallback: JavaScript click on any button/link containing "load more"
-        if not clicked:
-            js_clicked = _page.evaluate("""
-                () => {
-                    const all = Array.from(document.querySelectorAll('button, a'));
-                    const btn = all.find(el => {
-                        const t = (el.textContent || el.title || '').trim().toLowerCase();
-                        return t.includes('load more') || t.includes('show more');
-                    });
-                    if (btn) { btn.click(); return true; }
-                    return false;
-                }
-            """)
-            if js_clicked:
-                _page.wait_for_timeout(2_500)
-                clicked = True
-                log.info("[monitor] 'Load More' clicked via JS (iter %d)", i + 1)
-
-        # Stop when no button found AND row count hasn't grown
         if not clicked and current_row_count == prev_row_count:
             log.info("[monitor] All records loaded: %d rows (%d iterations)",
                      current_row_count, i + 1)
             _screenshot("monitor_load_done")
             break
+
+        if clicked:
+            log.info("[monitor] Load More clicked (iter %d) — waiting for new rows…", i + 1)
+            try:
+                _page.wait_for_function(
+                    f"() => document.querySelectorAll('table tbody tr').length > {current_row_count}",
+                    timeout=120_000,
+                )
+            except Exception:
+                log.warning("[monitor] Row count did not increase after 120s — stopping pagination")
+                break
 
         prev_row_count = current_row_count
 

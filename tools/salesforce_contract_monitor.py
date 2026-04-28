@@ -68,7 +68,14 @@ def initialize_session() -> None:
     log.info("[monitor] Initialising Salesforce session…")
 
     _pw      = sync_playwright().start()
-    _browser = _pw.chromium.launch(headless=True)
+    _browser = _pw.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",           # required in Cloud Run / Docker containers
+            "--disable-dev-shm-usage", # /dev/shm is only 64MB in Cloud Run; use /tmp
+            "--disable-gpu",
+        ],
+    )
 
     if os.path.exists(SESSION_FILE):
         log.info("[monitor] Restoring session from %s", SESSION_FILE)
@@ -181,7 +188,7 @@ def scrape_all_contracts() -> dict:
     _ensure_session_valid()
 
     log.info("[monitor] Navigating to contracts list…")
-    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=30_000)
+    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=60_000)
     _page.wait_for_timeout(3_000)
     _screenshot("monitor_list_loaded")
 
@@ -214,7 +221,7 @@ def scrape_all_contracts() -> dict:
 
 def _navigate_and_login_if_needed() -> None:
     """Go to contracts page; if redirected to login, authenticate and save session."""
-    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=30_000)
+    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=60_000)
     _page.wait_for_timeout(3_000)
 
     if "/login" in _page.url.lower():
@@ -222,7 +229,7 @@ def _navigate_and_login_if_needed() -> None:
         _do_login()
         _context.storage_state(path=SESSION_FILE)
         log.info("[monitor] Session saved to %s", SESSION_FILE)
-        _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=60_000)
         _page.wait_for_timeout(3_000)
     else:
         log.info("[monitor] Session still valid.")
@@ -233,7 +240,7 @@ def _navigate_and_login_if_needed() -> None:
 def _do_login() -> None:
     """Fill and submit the Salesforce login form."""
     _page.goto(os.environ["SALESFORCE_URL"], wait_until="domcontentloaded", timeout=60_000)
-    _page.wait_for_selector('input[placeholder="Username"]', timeout=30_000)
+    _page.wait_for_selector('input[placeholder="Username"]', timeout=60_000)
     _page.locator('input[placeholder="Username"]').fill(os.environ["SALESFORCE_USERNAME"])
     _page.locator('input[type="password"]').fill(os.environ["SALESFORCE_PASSWORD"])
 

@@ -454,11 +454,12 @@ def _load_all_records(date_cutoff=None) -> None:
 
         # Single JS evaluate finds and clicks Load More — avoids 8 CSS-selector
         # is_visible() calls that each block while the browser JS thread is busy.
+        # Match "Load More", "Load 50 More", "Load 25 More", "Show More", etc.
         clicked = _page.evaluate("""
             () => {
                 const btn = Array.from(document.querySelectorAll('button, a')).find(el => {
                     const t = (el.textContent || el.title || '').trim().toLowerCase();
-                    return t.includes('load more') || t.includes('show more');
+                    return (t.includes('load') && t.includes('more')) || t.includes('show more');
                 });
                 if (btn) { btn.scrollIntoView(); btn.click(); return true; }
                 return false;
@@ -775,17 +776,23 @@ def _save_excel_tracker(contracts: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _post_excel_to_onedrive(excel_path: str) -> None:
+    import time as _time
     webhook_url = os.environ.get("ONEDRIVE_EXCEL_WEBHOOK_URL", "")
     if not webhook_url:
         log.warning("[monitor] ONEDRIVE_EXCEL_WEBHOOK_URL not set — skipping OneDrive sync")
         return
-    try:
-        with open(excel_path, "rb") as f:
-            content = base64.b64encode(f.read()).decode("utf-8")
-        resp = requests.post(webhook_url, json={"content": content}, timeout=30)
-        log.info("[monitor] Excel posted to OneDrive via Power Automate (HTTP %s)", resp.status_code)
-    except Exception as e:
-        log.error("[monitor] Failed to post Excel to OneDrive: %s", e)
+    with open(excel_path, "rb") as f:
+        content = base64.b64encode(f.read()).decode("utf-8")
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(webhook_url, json={"content": content}, timeout=60)
+            log.info("[monitor] Excel posted to OneDrive via Power Automate (HTTP %s)", resp.status_code)
+            return
+        except Exception as e:
+            log.warning("[monitor] OneDrive post attempt %d/3 failed: %s", attempt, e)
+            if attempt < 3:
+                _time.sleep(10)
+    log.error("[monitor] Failed to post Excel to OneDrive after 3 attempts")
 
 
 # ---------------------------------------------------------------------------

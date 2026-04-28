@@ -143,7 +143,7 @@ def _build_contract_status_card(change: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    port = int(os.getenv("FLASK_PORT", "5000"))
+    port = int(os.getenv("FLASK_PORT", "8080"))
     log.info("Starting Contract Status monitor on port %d", port)
     log.info("GET /health — liveness check")
     _start_contract_monitor()

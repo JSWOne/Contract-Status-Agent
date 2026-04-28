@@ -263,6 +263,16 @@ def _navigate_and_login_if_needed() -> None:
     _page.wait_for_timeout(8_000)
 
     if "/login" in _page.url.lower():
+        # If we loaded a session file but still landed on the login page, the
+        # cookies are expired. Salesforce renders a different auth variant with
+        # those stale cookies (no standard Username input). Delete the file and
+        # reload so the clean standard login form appears.
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
+            log.info("[monitor] Stale session detected — cleared %s, reloading login page", SESSION_FILE)
+            _page.reload(wait_until="commit", timeout=120_000)
+            _page.wait_for_timeout(5_000)
+
         log.info("[monitor] On login page — authenticating…")
         _do_login()
         _context.storage_state(path=SESSION_FILE)

@@ -93,6 +93,110 @@ def screenshot():
         return {"error": str(e)}, 500
 
 
+@app.route("/contracts-page", methods=["GET"])
+def contracts_page():
+    """Restore saved session (or login fresh), navigate to contracts list, return screenshot + page text."""
+    import base64, asyncio, os as _os
+    from flask import make_response as _make_response
+    from playwright.sync_api import sync_playwright as _pw
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    CONTRACTS_URL = "https://jswsteel.my.site.com/jswone/s/recordlist/Contract/Default?Contract-filterId=JSW_One_All_Contracts"
+    SESSION_FILE  = _os.path.join(_os.path.dirname(__file__), "..", ".tmp", "sf_session.json")
+    sf_url  = _os.environ.get("SALESFORCE_URL", "")
+    sf_user = _os.environ.get("SALESFORCE_USERNAME", "")
+    sf_pass = _os.environ.get("SALESFORCE_PASSWORD", "")
+
+    steps = []
+    try:
+        pw = _pw().start()
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        ctx_args = dict(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+        )
+
+        # Try to restore session first
+        session_restored = False
+        if _os.path.exists(SESSION_FILE):
+            try:
+                ctx = browser.new_context(storage_state=SESSION_FILE, **ctx_args)
+                session_restored = True
+                log.info("[contracts-page] Session restored from %s", SESSION_FILE)
+            except Exception as e:
+                log.warning("[contracts-page] Session restore failed: %s", e)
+                ctx = browser.new_context(**ctx_args)
+        else:
+            ctx = browser.new_context(**ctx_args)
+            log.info("[contracts-page] No session file — fresh context")
+
+        page = ctx.new_page()
+
+        # If no session, do a login first
+        if not session_restored:
+            page.goto(sf_url, wait_until="commit", timeout=60_000)
+            page.wait_for_timeout(5_000)
+            if "/login" in page.url.lower():
+                page.wait_for_selector('input[placeholder="Username"]', timeout=30_000)
+                page.locator('input[placeholder="Username"]').fill(sf_user)
+                page.locator('input[type="password"]').fill(sf_pass)
+                for sel in ['button:has-text("Log in")', 'button:has-text("Login")', 'button[type="submit"]']:
+                    try:
+                        btn = page.locator(sel).first
+                        if btn.is_visible(timeout=2_000):
+                            btn.click()
+                            break
+                    except Exception:
+                        continue
+                page.wait_for_timeout(8_000)
+                steps.append(("After login", page.url, base64.b64encode(page.screenshot(full_page=False)).decode()))
+
+        # Navigate to contracts page
+        steps.append(("Before contracts navigation", page.url, base64.b64encode(page.screenshot(full_page=False)).decode()))
+        page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
+        page.wait_for_timeout(5_000)
+        steps.append(("5s after goto contracts", page.url, base64.b64encode(page.screenshot(full_page=False)).decode()))
+
+        # Wait for table
+        table_found = False
+        try:
+            page.wait_for_selector("table tbody tr", timeout=30_000)
+            table_found = True
+        except Exception:
+            pass
+        steps.append(("After wait_for_selector table (found=%s)" % table_found, page.url,
+                       base64.b64encode(page.screenshot(full_page=False)).decode()))
+
+        # Grab page text for diagnosis
+        page_text = (page.evaluate("() => document.body.innerText") or "").strip()[:1500]
+        row_count = page.locator("table tbody tr").count()
+
+        browser.close()
+        pw.stop()
+
+        imgs = "".join(
+            f"<h3>{label}</h3><p>URL: {url}</p>"
+            f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border:1px solid #ccc;margin-bottom:20px"><br>'
+            for label, url, b64 in steps
+        )
+        html = (
+            f"<!DOCTYPE html><html><body>"
+            f"<h2>Session restored: {session_restored} | Table rows found: {row_count}</h2>"
+            f"<pre style='background:#f5f5f5;padding:8px;white-space:pre-wrap'>{page_text}</pre>"
+            f"{imgs}"
+            f"</body></html>"
+        )
+        resp = _make_response(html, 200)
+        resp.headers["Content-Type"] = "text/html"
+        return resp
+    except Exception as e:
+        return {"error": str(e), "steps_completed": [s[0] for s in steps]}, 500
+
+
 @app.route("/test-login", methods=["GET"])
 def test_login():
     """Fill Salesforce credentials and screenshot what happens after clicking Login."""

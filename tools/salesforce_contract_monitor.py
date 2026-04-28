@@ -77,15 +77,27 @@ def initialize_session() -> None:
         ],
     )
 
+    # Mimic a real desktop Chrome browser — headless Chromium from a datacenter
+    # is detected by Salesforce and served a bot-challenge / blank page otherwise.
+    _ctx_args = dict(
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        viewport={"width": 1920, "height": 1080},
+        locale="en-US",
+    )
+
     if os.path.exists(SESSION_FILE):
         log.info("[monitor] Restoring session from %s", SESSION_FILE)
         try:
-            _context = _browser.new_context(storage_state=SESSION_FILE)
+            _context = _browser.new_context(storage_state=SESSION_FILE, **_ctx_args)
         except Exception as e:
             log.warning("[monitor] Session restore failed (%s) — fresh context", e)
-            _context = _browser.new_context()
+            _context = _browser.new_context(**_ctx_args)
     else:
-        _context = _browser.new_context()
+        _context = _browser.new_context(**_ctx_args)
 
     _page = _context.new_page()
     _navigate_and_login_if_needed()
@@ -221,8 +233,8 @@ def scrape_all_contracts() -> dict:
 
 def _navigate_and_login_if_needed() -> None:
     """Always start from the login page (lightweight), then navigate to contracts."""
-    _page.goto(os.environ["SALESFORCE_URL"], wait_until="commit", timeout=120_000)
-    _page.wait_for_timeout(3_000)
+    _page.goto(os.environ["SALESFORCE_URL"], wait_until="domcontentloaded", timeout=120_000)
+    _page.wait_for_timeout(8_000)
 
     if "/login" in _page.url.lower():
         log.info("[monitor] On login page — authenticating…")

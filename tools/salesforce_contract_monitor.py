@@ -188,8 +188,8 @@ def scrape_all_contracts() -> dict:
     _ensure_session_valid()
 
     log.info("[monitor] Navigating to contracts list…")
-    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=60_000)
-    _page.wait_for_timeout(3_000)
+    _page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
+    _page.wait_for_timeout(5_000)
     _screenshot("monitor_list_loaded")
 
     _sort_created_date_desc()
@@ -220,26 +220,25 @@ def scrape_all_contracts() -> dict:
 # ---------------------------------------------------------------------------
 
 def _navigate_and_login_if_needed() -> None:
-    """Go to contracts page; if redirected to login, authenticate and save session."""
-    _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=60_000)
+    """Always start from the login page (lightweight), then navigate to contracts."""
+    _page.goto(os.environ["SALESFORCE_URL"], wait_until="commit", timeout=120_000)
     _page.wait_for_timeout(3_000)
 
     if "/login" in _page.url.lower():
-        log.info("[monitor] Redirected to login — authenticating…")
+        log.info("[monitor] On login page — authenticating…")
         _do_login()
         _context.storage_state(path=SESSION_FILE)
         log.info("[monitor] Session saved to %s", SESSION_FILE)
-        _page.goto(CONTRACTS_URL, wait_until="domcontentloaded", timeout=60_000)
-        _page.wait_for_timeout(3_000)
     else:
         log.info("[monitor] Session still valid.")
 
+    _page.goto(CONTRACTS_URL, wait_until="commit", timeout=120_000)
+    _page.wait_for_timeout(5_000)
     _screenshot("monitor_contracts_page")
 
 
 def _do_login() -> None:
-    """Fill and submit the Salesforce login form."""
-    _page.goto(os.environ["SALESFORCE_URL"], wait_until="domcontentloaded", timeout=60_000)
+    """Fill and submit the Salesforce login form. Page is already on login URL."""
     _page.wait_for_selector('input[placeholder="Username"]', timeout=60_000)
     _page.locator('input[placeholder="Username"]').fill(os.environ["SALESFORCE_USERNAME"])
     _page.locator('input[type="password"]').fill(os.environ["SALESFORCE_PASSWORD"])
@@ -258,7 +257,7 @@ def _do_login() -> None:
     _page.wait_for_timeout(3_000)  # allow redirect chain to start
 
     try:
-        _page.wait_for_url(lambda u: "/login" not in u.lower(), timeout=60_000)
+        _page.wait_for_url(lambda u: "/login" not in u.lower(), timeout=120_000)
     except Exception:
         _screenshot("monitor_login_failed")
         raise RuntimeError(

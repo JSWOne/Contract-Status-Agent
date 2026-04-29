@@ -315,8 +315,8 @@ def _do_login() -> None:
     if password is None:
         _raise_login_form_error("password field")
 
-    username.fill(os.environ["SALESFORCE_USERNAME"])
-    password.fill(os.environ["SALESFORCE_PASSWORD"])
+    _type_login_value(username, os.environ["SALESFORCE_USERNAME"], "username")
+    _type_login_value(password, os.environ["SALESFORCE_PASSWORD"], "password")
 
     # Try button selectors in order — Salesforce sometimes renders "Log in" or "Login"
     button = _first_visible_locator([
@@ -350,10 +350,12 @@ def _do_login() -> None:
 def _submit_login(button, password) -> None:
     """Submit Salesforce login with fallbacks for headless Cloud Run clicks."""
     attempts = [
+        ("keyboard Enter", lambda: _page.keyboard.press("Enter")),
+        ("password Enter", lambda: password.press("Enter", timeout=5_000)),
+        ("coordinate click", lambda: _coordinate_click(button)),
         ("normal click", lambda: button.click(timeout=5_000)),
         ("forced click", lambda: button.click(timeout=5_000, force=True)),
         ("DOM click", lambda: button.evaluate("(el) => el.click()")),
-        ("password Enter", lambda: password.press("Enter", timeout=5_000)),
     ]
 
     last_error = None
@@ -361,8 +363,7 @@ def _submit_login(button, password) -> None:
         try:
             log.info("[monitor] Submitting login via %s", label)
             action()
-            _page.wait_for_timeout(3_000)
-            if "/login" not in (_page.url or "").lower():
+            if _wait_for_login_redirect(timeout=15_000):
                 log.info("[monitor] Login submit succeeded via %s", label)
                 return
         except Exception as exc:
@@ -370,6 +371,30 @@ def _submit_login(button, password) -> None:
             log.warning("[monitor] Login submit via %s failed: %s", label, exc)
 
     _raise_login_form_error(f"login submit action; last error: {last_error}")
+
+
+def _type_login_value(locator, value: str, label: str) -> None:
+    """Type into Aura login inputs so Salesforce component state is updated."""
+    locator.click(timeout=10_000)
+    locator.press("Control+A", timeout=5_000)
+    locator.press("Backspace", timeout=5_000)
+    locator.type(value, delay=30, timeout=60_000)
+    log.info("[monitor] Typed %s field", label)
+
+
+def _coordinate_click(locator) -> None:
+    box = locator.bounding_box(timeout=5_000)
+    if not box:
+        raise RuntimeError("login button has no bounding box")
+    _page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+
+def _wait_for_login_redirect(timeout: int) -> bool:
+    try:
+        _page.wait_for_url(lambda url: "/login" not in url.lower(), timeout=timeout)
+        return True
+    except Exception:
+        return "/login" not in (_page.url or "").lower()
 
 
 def _validate_required_env() -> None:

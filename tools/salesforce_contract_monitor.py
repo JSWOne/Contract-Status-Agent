@@ -288,32 +288,9 @@ def _do_login() -> None:
     # wait_until="commit" only guarantees the HTTP response started — the login
     # form is rendered by JavaScript which can take 2-3 min to download and run
     # on a cold GCP connection. 300s gives enough headroom for any realistic case.
-    username = _first_visible_locator([
-        'input[placeholder="Username"]',
-        'input[placeholder*="Username"]',
-        'input[placeholder*="Email"]',
-        'input[name="username"]',
-        'input[name="UserName"]',
-        'input#username',
-        'input[type="email"]',
-        'input[autocomplete="username"]',
-        'input[aria-label*="Username"]',
-        'input[aria-label*="Email"]',
-        'input:not([type="hidden"]):not([type="password"])',
-    ], timeout=300_000)
-    if username is None:
-        _raise_login_form_error("username field")
-
-    password = _first_visible_locator([
-        'input[type="password"]',
-        'input[name="pw"]',
-        'input[name="password"]',
-        'input#password',
-        'input[autocomplete="current-password"]',
-        'input[aria-label*="Password"]',
-    ], timeout=60_000)
-    if password is None:
-        _raise_login_form_error("password field")
+    username, password = _find_login_inputs(timeout=300_000)
+    if username is None or password is None:
+        _raise_login_form_error("username/password fields")
 
     _type_login_value(username, os.environ["SALESFORCE_USERNAME"], "username")
     _type_login_value(password, os.environ["SALESFORCE_PASSWORD"], "password")
@@ -373,12 +350,113 @@ def _submit_login(button, password) -> None:
     _raise_login_form_error(f"login submit action; last error: {last_error}")
 
 
+def _find_login_inputs(timeout: int):
+    """Find username/password as a visible pair in the Salesforce Aura login DOM."""
+    deadline = datetime.now() + timedelta(milliseconds=timeout)
+    last_error = None
+
+    while datetime.now() < deadline:
+        try:
+            handles = _page.query_selector_all("input")
+            visible = []
+            for index, handle in enumerate(handles):
+                try:
+                    if not handle.is_visible():
+                        continue
+                    meta = handle.evaluate("""
+                        (el) => ({
+                            type: (el.getAttribute('type') || '').toLowerCase(),
+                            id: el.id || '',
+                            name: el.getAttribute('name') || '',
+                            placeholder: el.getAttribute('placeholder') || '',
+                            aria: el.getAttribute('aria-label') || '',
+                            autocomplete: el.getAttribute('autocomplete') || '',
+                        })
+                    """)
+                    visible.append({"index": index, "handle": handle, "meta": meta})
+                except Exception as exc:
+                    last_error = exc
+
+            password_item = next(
+                (item for item in visible if item["meta"].get("type") == "password"),
+                None,
+            )
+            if password_item is None:
+                _page.wait_for_timeout(1_000)
+                continue
+
+            non_password = [
+                item for item in visible
+                if item["index"] < password_item["index"]
+                and item["meta"].get("type") not in ("hidden", "password", "checkbox", "radio", "submit", "button")
+            ]
+
+            def score(item):
+                meta_text = " ".join(str(v).lower() for v in item["meta"].values())
+                if "username" in meta_text:
+                    return 100
+                if "email" in meta_text:
+                    return 90
+                if "user" in meta_text:
+                    return 80
+                return 10
+
+            username_item = max(non_password, key=score) if non_password else None
+            if username_item is None:
+                _page.wait_for_timeout(1_000)
+                continue
+
+            log.info("[monitor] Login inputs paired: username=%s password=%s",
+                     _safe_input_meta(username_item["meta"]),
+                     _safe_input_meta(password_item["meta"]))
+            return username_item["handle"], password_item["handle"]
+
+        except Exception as exc:
+            last_error = exc
+            _page.wait_for_timeout(1_000)
+
+    if last_error:
+        log.warning("[monitor] Login input discovery error: %s", last_error)
+    return None, None
+
+
+def _safe_input_meta(meta: dict) -> dict:
+    return {
+        "type": meta.get("type", ""),
+        "id": meta.get("id", ""),
+        "name": meta.get("name", ""),
+        "placeholder": meta.get("placeholder", ""),
+        "aria": meta.get("aria", ""),
+        "autocomplete": meta.get("autocomplete", ""),
+    }
+
+
 def _type_login_value(locator, value: str, label: str) -> None:
     """Type into Aura login inputs so Salesforce component state is updated."""
-    locator.click(timeout=10_000)
-    locator.press("Control+A", timeout=5_000)
-    locator.press("Backspace", timeout=5_000)
-    locator.type(value, delay=30, timeout=60_000)
+    try:
+        locator.click(timeout=10_000)
+        locator.press("Control+A", timeout=5_000)
+        locator.press("Backspace", timeout=5_000)
+        locator.type(value, delay=30, timeout=60_000)
+    except Exception as exc:
+        log.warning("[monitor] Direct typing into %s field failed: %s", label, exc)
+        locator.evaluate("""
+            (el) => {
+                el.focus();
+                if (typeof el.select === 'function') {
+                    el.select();
+                } else if (typeof el.setSelectionRange === 'function') {
+                    el.setSelectionRange(0, (el.value || '').length);
+                }
+            }
+        """)
+        _page.keyboard.press("Control+A")
+        _page.keyboard.press("Backspace")
+        _page.keyboard.type(value, delay=30)
+
+    length = locator.evaluate("(el) => (el.value || '').length")
+    if length != len(value):
+        raise RuntimeError(f"{label} field did not receive the expected value length")
     log.info("[monitor] Typed %s field", label)
 
 

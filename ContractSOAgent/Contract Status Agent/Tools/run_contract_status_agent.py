@@ -16,6 +16,8 @@
 import argparse
 import importlib.util
 import json
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -25,7 +27,8 @@ TOOL_NAME = "run_contract_status_agent.py"
 BASE_DIR = Path(__file__).parent.parent
 TOOLS_DIR = Path(__file__).parent
 MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
-LOG_PATH = BASE_DIR / "Logs" / "error.log"
+# Use /tmp in Cloud Run (GCS_MEMORY_BUCKET set) since /app is read-only; local otherwise
+LOG_PATH = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else BASE_DIR / "Logs" / "error.log"
 LATEST_SCRAPE_PATH = TOOLS_DIR / "last_scraped_contracts.json"
 
 
@@ -73,9 +76,13 @@ def log_error(
         "learning": learning,
         "ticket_id": ticket_id,
     }
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as log_exc:
+        print(json.dumps(entry), file=sys.stderr)
+        print(f"[log_error] Could not write to {LOG_PATH}: {log_exc}", file=sys.stderr)
 
 
 def read_memory():

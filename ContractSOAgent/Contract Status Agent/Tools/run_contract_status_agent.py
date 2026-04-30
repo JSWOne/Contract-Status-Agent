@@ -73,6 +73,7 @@ def log_error(
         "learning": learning,
         "ticket_id": ticket_id,
     }
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
 

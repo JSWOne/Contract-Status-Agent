@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.56.0-noble
+FROM mcr.microsoft.com/playwright/python:v1.59.0-noble
 
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_HEADLESS=True

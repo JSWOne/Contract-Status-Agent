@@ -27,7 +27,7 @@ PA_TEAMS_URL = os.getenv("PA_TEAMS_URL")
 TOOL_NAME = "notify_teams_via_pa.py"
 SKILL_NAME = "Contract Status Agent"
 MEMORY_PATH = Path(__file__).parent.parent / "Memory" / "memory.json"
-LOG_PATH = Path(__file__).parent.parent / "Logs" / "error.log"
+LOG_PATH = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else Path(__file__).parent.parent / "Logs" / "error.log"
 
 
 def utc_now():
@@ -60,8 +60,14 @@ def log_error(
         "learning": learning,
         "ticket_id": ticket_id,
     }
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as log_exc:
+        import sys
+        print(json.dumps(entry), file=sys.stderr)
+        print(f"[log_error] Could not write to {LOG_PATH}: {log_exc}", file=sys.stderr)
 
 
 def read_memory():

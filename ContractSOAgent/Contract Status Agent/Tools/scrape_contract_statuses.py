@@ -30,7 +30,7 @@ HEADLESS      = os.getenv("PLAYWRIGHT_HEADLESS", "True") == "True"
 DRY_RUN       = os.getenv("DRY_RUN", "True").strip().lower() == "true"
 
 MEMORY_PATH = Path(__file__).parent.parent / "Memory" / "memory.json"
-LOG_PATH    = Path(__file__).parent.parent / "Logs"   / "error.log"
+LOG_PATH    = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else Path(__file__).parent.parent / "Logs" / "error.log"
 
 # Date cutoff — only keep contracts created within the last 14 days
 DATE_WINDOW_DAYS = 14
@@ -77,8 +77,14 @@ def log_error(run_id, step, error_code, error_message,
         "learning":             learning,
         "ticket_id":            ticket_id,
     }
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as log_exc:
+        import sys
+        print(json.dumps(entry), file=sys.stderr)
+        print(f"[log_error] Could not write to {LOG_PATH}: {log_exc}", file=sys.stderr)
 
 
 # ── Helper: write step progress to Memory/memory.json ─────────────────────────

@@ -1,8 +1,12 @@
-# Credentials — never push these
+# Secrets and local runtime config
 .env
+**/.env
+**/config/token.json
 
-# Temporary files
-.tmp/
+# Runtime state, scraped data, and logs
+**/Memory/*.json
+**/Logs/*.log
+**/Tools/last_scraped_contracts.json
 
 # Python cache
 __pycache__/
@@ -10,5 +14,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Playwright session state
-sf_session.json
+# Local OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/

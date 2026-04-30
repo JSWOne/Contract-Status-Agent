@@ -1,5 +1,7 @@
 flask
-requests
-python-dotenv
-playwright
+google-cloud-storage
+gunicorn
 openpyxl
+playwright
+python-dotenv
+requests

@@ -1,0 +1,5 @@
+playwright
+google-cloud-storage
+openpyxl
+requests
+python-dotenv

@@ -1,9 +1,22 @@
+.git
+.gitignore
+
+# Secrets and local config
 .env
-.tmp/
+**/.env
+
+# Runtime state
+**/Memory/*.json
+**/Logs/*.log
+**/Tools/last_scraped_contracts.json
+
+# Python cache
 __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
-*.pyd
-.git/
-*.md
+
+# Local/editor files
+.vscode/
+.DS_Store
+Thumbs.db

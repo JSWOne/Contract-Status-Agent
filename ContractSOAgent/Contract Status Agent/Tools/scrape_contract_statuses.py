@@ -100,8 +100,8 @@ def write_memory_step(memory, step_name, status, detail="", extra=None):
     if memory.get("state", {}).get("run_history"):
         memory["state"]["run_history"][-1]["steps"].append(step_entry)
     memory["last_action"] = detail
-    with open(MEMORY_PATH, "w", encoding="utf-8") as f:
-        json.dump(memory, f, indent=2)
+    # Memory persistence is handled by the orchestrator (run_contract_status_agent.py).
+    # Skip local file write here to avoid crashing in Cloud Run (read-only /app filesystem).
 
 
 # ── Phase 1: Login ─────────────────────────────────────────────────────────────

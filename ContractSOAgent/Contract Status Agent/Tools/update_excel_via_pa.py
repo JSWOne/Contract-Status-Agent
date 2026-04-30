@@ -100,8 +100,7 @@ def write_memory_step(memory, step_name, status, detail="", extra=None):
         run_history[-1].setdefault("steps", []).append(step_entry)
 
     memory["last_action"] = detail
-    with open(MEMORY_PATH, "w", encoding="utf-8") as f:
-        json.dump(memory, f, indent=2)
+    # Memory persistence is handled by the orchestrator (run_contract_status_agent.py).
 
 
 def normalize_contract(contract):

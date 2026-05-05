@@ -1,0 +1,32 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.contract-logging
+      - -t
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$COMMIT_SHA
+      - .
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - contract-logging-agent
+      - --image
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$COMMIT_SHA
+      - --region
+      - asia-south1
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --timeout
+      - 900
+      - --memory
+      - 2Gi
+      - --cpu
+      - "1"
+
+images:
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$COMMIT_SHA

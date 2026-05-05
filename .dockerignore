@@ -9,6 +9,7 @@
 **/Memory/*.json
 **/Logs/*.log
 **/Tools/last_scraped_contracts.json
+**/.tmp/
 
 # Python cache
 __pycache__/

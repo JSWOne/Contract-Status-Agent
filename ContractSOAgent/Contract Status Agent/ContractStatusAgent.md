@@ -1,6 +1,6 @@
 # ContractStatusAgent — Skill Instructions
 > **Parent Orchestrator:** ContractSOAgent
-> Version: 2.9.0 | Phase: 2 | Status: Cloud Run Repo Updated; Env Vars + Scheduler Pending | Last Updated: 2026-04-30
+> Version: 3.1.0 | Phase: 2 | Status: **FULLY DEPLOYED ON GCP** — Cloud Run LIVE + Scheduler ENABLED | Last Updated: 2026-04-30
 
 ---
 
@@ -8,13 +8,16 @@
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| `scrape_contract_statuses.py` | Complete & Tested | 357 contracts/14 days confirmed on 2026-04-30; descending Created Date + infinite scroll working |
-| `update_excel_via_pa.py` | Complete & Tested | Builds `LIVE Contracts` workbook and triggers PA Excel-update flow; confirmed Excel tracker updated after closing locked workbook |
-| `notify_teams_via_pa.py` | Complete & Tested | Sends valid `adaptive_card` payload to PA Teams flow; confirmed card posted to Teams channel |
-| `run_contract_status_agent.py` | Complete & Tested | One-shot local orchestrator; scraped 360 contracts, updated Excel flow, saved baseline snapshot |
-| Cloud Run deployment package | Complete | `main.py`, root `requirements.txt`, `Dockerfile`, and `.dockerignore` added |
-| GCS memory persistence | Complete | `memory_store.py` added; runner uses GCS when `GCS_MEMORY_BUCKET` is configured |
-| Cloud Run-connected repo cleanup | Complete | Current code pushed to `JSWOne/Contract-Status-Agent`; old `tools/` and `workflows/` code removed in commit `e172cfd` |
+| `scrape_contract_statuses.py` | ✅ Complete & Tested | 368 contracts scraped in production Cloud Run run on 2026-04-30; descending Created Date + infinite scroll working |
+| `update_excel_via_pa.py` | ✅ Complete & Tested | Builds `LIVE Contracts` workbook and triggers PA Excel-update flow; confirmed Excel tracker updated |
+| `notify_teams_via_pa.py` | ✅ Complete & Tested | Sends valid `adaptive_card` payload to PA Teams flow; confirmed card posted to Teams channel |
+| `run_contract_status_agent.py` | ✅ Complete & Tested | Full production run: 368 contracts, 10 status changes, 10 Teams notifications, GCS snapshot saved |
+| `memory_store.py` | ✅ Complete | GCS-backed persistence; bucket `ai-for-jswone-contract-agent-state`, blob `contract-status-agent/memory.json` |
+| Cloud Run deployment (`main.py`, `Dockerfile`) | ✅ Deployed & Live | Service `jsw-contract-status-agent` running in `asia-south1`; health ✅, `/run` ✅ |
+| Cloud Run environment variables | ✅ Configured | All 9 vars set via `--env-vars-file` on 2026-04-30 |
+| Cloud Run runtime settings | ✅ Configured | Timeout 900s, concurrency 1, min/max instances 1 |
+| GCS memory persistence (production) | ✅ Live | memory.json timestamp updated after first production run |
+| Cloud Scheduler | ✅ Live | Job `jsw-contract-status-agent-scheduler` — `*/15 * * * *` Asia/Kolkata — STATE: ENABLED |
 
 ---
 
@@ -429,37 +432,36 @@ New Status      <new_status>
 | GitHub repo | `https://github.com/JSWOne/Contract-Status-Agent` branch `main` |
 | Deployment type | Repository build using root `Dockerfile` |
 
-### 7.1 Cloud Run Deployment Status
+### 7.1 Cloud Run Deployment Status — **ALL COMPLETE** (2026-04-30)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| GitHub repo push | Complete | Current code pushed to Cloud Run-connected repo in commit `04d9ad6`; old repo code removed in commit `e172cfd`. |
-| Cloud Run wrapper | Complete | `main.py` exposes `/` and `/run`. |
-| Playwright container base | Complete | Dockerfile uses Microsoft Playwright Python image. |
-| GCS bucket/object | Complete | Bucket `ai-for-jswone-contract-agent-state`; object `contract-status-agent/memory.json` uploaded. |
-| GCS IAM permission | Complete | Cloud Run service account `729173585258-compute@developer.gserviceaccount.com` granted bucket access. |
-| Environment variables | Pending in Cloud Run | Configure via Cloud Run env vars or Secret Manager before live run. |
-| Persistent memory | Complete | `memory_store.py` uses Google Cloud Storage when `GCS_MEMORY_BUCKET` is set. |
-| Scheduler | Pending | Add Cloud Scheduler job after Cloud Run service is deployed and tested manually. |
+| GitHub repo push | ✅ Complete | Code at `JSWOne/Contract-Status-Agent` branch `main`; old code removed in commit `e172cfd`. |
+| Cloud Run wrapper | ✅ Complete | `main.py` exposes `GET /` (health) and `GET/POST /run` (agent trigger). |
+| Playwright container base | ✅ Complete | `FROM mcr.microsoft.com/playwright/python:v1.59.0-noble` — version matches pip package. |
+| GCS bucket/object | ✅ Complete | Bucket `ai-for-jswone-contract-agent-state`; object `contract-status-agent/memory.json`. |
+| GCS IAM permission | ✅ Complete | Service account `729173585258-compute@developer.gserviceaccount.com` granted bucket access. |
+| Environment variables | ✅ Complete | All 9 vars set via `--env-vars-file` on 2026-04-30. |
+| Runtime settings | ✅ Complete | Timeout 900s, concurrency 1, min/max instances 1. |
+| Health endpoint | ✅ Complete | `GET /` returns `{"service":"contract-status-agent","status":"ok"}`. |
+| Manual run test | ✅ Complete | `GET /run` — 368 contracts, 10 changes, 10 Teams notifications — 2026-04-30. |
+| Persistent memory | ✅ Complete | `memory_store.py` uses GCS; snapshot saved after every run. |
+| Cloud Scheduler | ✅ Complete | Job `jsw-contract-status-agent-scheduler` — `*/15 * * * *` Asia/Kolkata — STATE: ENABLED. |
 
-### 7.1.1 Production Deployment Pending Checklist
+### 7.1.1 Production Deployment Checklist — **COMPLETE** (2026-04-30)
 
-1. Confirm Cloud Build trigger uses repo `JSWOne/Contract-Status-Agent`, branch `main`, and root `Dockerfile`.
-2. Trigger/verify a new Cloud Run build from commit `e172cfd` or newer.
-3. Add Cloud Run environment variables listed in section 7.2.
-4. Set Cloud Run runtime settings:
-   - Timeout: `900s`
-   - Container concurrency: `1`
-   - Minimum instances: `1`
-   - Maximum instances: `1`
-5. Test health endpoint `/`.
-6. Test one manual agent run via `/run`.
-7. Verify:
-   - Cloud Run logs show successful scrape.
-   - Excel Power Automate flow succeeds.
-   - GCS `contract-status-agent/memory.json` last modified timestamp updates.
-   - Teams notification posts only when status changes are detected.
-8. Create Cloud Scheduler job to call `/run` every 15 minutes.
+- [x] 1. Confirm Cloud Build trigger uses repo `JSWOne/Contract-Status-Agent`, branch `main`, and root `Dockerfile`.
+- [x] 2. Trigger/verify Cloud Build — build ✅, push to Artifact Registry ✅ (Note: Deploy step in Cloud Build blocked; manual deploy used — see section 7.3).
+- [x] 3. Add Cloud Run environment variables (all 9 vars set via `--env-vars-file`).
+- [x] 4. Set Cloud Run runtime settings (timeout 900s, concurrency 1, min/max instances 1).
+- [x] 5. Test health endpoint `GET /` — returns `{"service":"contract-status-agent","status":"ok"}`.
+- [x] 6. Test one manual agent run via `GET /run`:
+  - Cloud Run logs: 368 contracts scraped ✅
+  - Excel Power Automate flow triggered ✅
+  - GCS `contract-status-agent/memory.json` timestamp updated ✅
+  - Teams notifications sent for 10 status changes ✅
+- [x] 7. Create Cloud Scheduler job `jsw-contract-status-agent-scheduler` — `*/15 * * * *` Asia/Kolkata — STATE: ENABLED — 2026-04-30.
+- [x] 8. **DEPLOYMENT COMPLETE** — Agent is fully live on GCP, running automatically every 15 minutes.
 
 ### 7.2 Required Cloud Run Environment Variables
 
@@ -476,6 +478,49 @@ New Status      <new_status>
 | `GCS_MEMORY_BLOB` | GCS object path, e.g. `contract-status-agent/memory.json` |
 
 Recommended production handling: store secrets in Secret Manager and mount/inject them as Cloud Run environment variables.
+
+---
+
+### 7.3 Cloud Run Known Issues & Fixes (2026-04-30)
+
+These bugs were hit during initial deployment. Document here so future agents avoid them.
+
+| # | Error | Root Cause | Fix Applied |
+|---|-------|------------|-------------|
+| 1 | `[Errno 2] No such file or directory: '/app/.../Logs/error.log'` | `/app` filesystem is read-only in Cloud Run; `Logs/` excluded by `.dockerignore` | Changed `LOG_PATH` to `/tmp/error.log` when `GCS_MEMORY_BUCKET` is set; all tool scripts |
+| 2 | `[Errno 2] No such file or directory: '/app/.../Memory/memory.json'` | `write_memory_step()` in tool scripts wrote to local path; `/app` is read-only | Removed `open(MEMORY_PATH, "w")` from `write_memory_step()` in scraper, Excel updater, Teams notifier; orchestrator owns GCS write |
+| 3 | `BrowserType.launch: Executable doesn't exist` / `Playwright was just updated to 1.59.0` | pip package `playwright==1.59.0` but Docker image was `v1.56.0-noble` — binary path mismatch | Changed `Dockerfile` base image from `v1.56.0-noble` to `v1.59.0-noble` |
+| 4 | Cloud Build `INTERNAL_ERROR` before step 1 | Trigger SA `729173585258-compute@developer.gserviceaccount.com` lacked `logging.logWriter` (CLOUD_LOGGING_ONLY mode) | Admin changed trigger SA to `sa-cloudbuild@ai-for-jswone.iam.gserviceaccount.com` |
+| 5 | Cloud Build deploy step fails | `sa-cloudbuild` lacks `run.services.get` | Manual deploy workaround: `gcloud run services update --image=<latest>`. Permanent fix: grant `roles/run.developer` to sa-cloudbuild |
+| 6 | Old env var names on Cloud Run | Service had `SALESFORCE_URL`, `SALESFORCE_USERNAME` etc (legacy names); code uses `SF_PORTAL_URL`, `SF_USERNAME` etc | Full replacement via `gcloud run services update --env-vars-file env_vars.yaml` |
+| 7 | `--remove-env-vars` left old vars present | gcloud `--remove-env-vars` unreliable for bulk cleanup | Use `--env-vars-file` (atomic full replacement) instead of `--remove-env-vars` |
+| 8 | Cloud Build "Couldn't read commit" | Repo was force-pushed; Cloud Build stored stale SHA | Re-trigger build from Console — picks up HEAD |
+
+### 7.4 Cloud Scheduler Setup (Pending API Enablement)
+
+**Step 1 — Admin enables API:**
+```
+gcloud services enable cloudscheduler.googleapis.com --project=ai-for-jswone
+```
+
+**Step 2 — Create the scheduler job:**
+```
+gcloud scheduler jobs create http jsw-contract-status-agent-scheduler \
+  --schedule="*/15 * * * *" \
+  --uri="https://jsw-contract-status-agent-blajkpcmsa-el.a.run.app/run" \
+  --http-method=GET \
+  --location=asia-south1 \
+  --project=ai-for-jswone \
+  --time-zone="Asia/Kolkata" \
+  --attempt-deadline=960s
+```
+
+**Step 3 — Verify first scheduled run:**
+```
+gcloud scheduler jobs describe jsw-contract-status-agent-scheduler \
+  --location=asia-south1 --project=ai-for-jswone
+```
+Then check: Cloud Run logs, GCS memory.json last-modified timestamp, Power Automate run history, Teams channel.
 
 ---
 

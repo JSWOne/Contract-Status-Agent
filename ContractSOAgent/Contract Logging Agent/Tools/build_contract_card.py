@@ -163,6 +163,34 @@ def build_contract_created_card(ticket_id: str, contract_number: str) -> dict:
     }
 
 
+def build_contract_creation_failed_card(ticket_id: str, error_message: str) -> dict:
+    safe_error = (error_message or "Unknown error").strip()
+    if len(safe_error) > 900:
+        safe_error = safe_error[:897] + "..."
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Sorry, Not able to create new contract for {ticket_id} due to this error.",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Attention",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Jira Ticket", "value": ticket_id or "-"},
+                    {"title": "Error", "value": safe_error},
+                ],
+            },
+        ],
+    }
+
+
 def build_contract_creation_started_card(ticket_id: str) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",

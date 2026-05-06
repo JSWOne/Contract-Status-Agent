@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request
 
 from build_contract_card import (
     build_audit_card,
+    build_contract_creation_failed_card,
     build_contract_created_card,
     build_confirmation_card,
     build_navigation_success_card,
@@ -148,7 +149,10 @@ def create_contract_after_confirm(ticket_id: str, data: dict) -> dict:
     except Exception as exc:
         app.logger.exception("Contract creation failed for %s: %s", ticket_id, exc)
         handle_error("create_contract_in_portal", type(exc).__name__, str(exc), {"ticket_id": ticket_id})
-        post_text(f"Could not create contract for {ticket_id}: {exc}")
+        try:
+            post_card(build_contract_creation_failed_card(ticket_id, str(exc)))
+        except Exception as notify_exc:
+            app.logger.exception("Could not post contract creation failure card: %s", notify_exc)
         return {"status": "error", "ticket_id": ticket_id, "detail": str(exc)}
 
 

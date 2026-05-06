@@ -368,8 +368,8 @@ Pending for production readiness:
 - Fix added: `/contract-confirm` now accepts common Power Automate response wrappers, posts the audit card before portal automation, and makes local memory/log writes non-blocking.
 - Production confirmation-card post then failed in Power Automate at `Post adaptive card and wait for a response` with `MissingOrInvalidBotMessageRequest`.
 - Fix added: confirmation/audit/success cards now use Teams Flowbot-safe Adaptive Card version `1.2`; removed newer `isRequired`, `errorMessage`, and action `style` properties from the confirmation card.
-- After confirmed-details audit card, agent posts progress Adaptive Card: `Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.`
-- Progress notification uses `adaptive_card` payload because the Power Automate Teams posting flow accepts card payloads reliably; plain `text` payload did not show in the channel during production test.
+- After confirmed-details audit card, Power Automate posts the single progress message: `Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.`
+- Cloud Run no longer posts its own progress Adaptive Card, to avoid duplicate Teams messages.
 - Production log check showed `/contract-confirm` was returning HTTP 200 quickly without reliable Playwright progress logs because contract creation was launched in a daemon background thread.
 - Fix added: `/contract-confirm` now runs JSW Steel Salesforce contract creation synchronously before returning, so Cloud Run keeps CPU active and Logs Explorer shows the actual creation path.
 - Added `[contract-create]` log milestones for login started, login completed, new contract form open, form fill, save, and generated Contract Number.

@@ -8,25 +8,10 @@ steps:
       - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$BUILD_ID
       - .
 
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    entrypoint: gcloud
+  - name: gcr.io/cloud-builders/docker
     args:
-      - run
-      - deploy
-      - jsw-contract-logging-agent
-      - --image
+      - push
       - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$BUILD_ID
-      - --region
-      - asia-south1
-      - --platform
-      - managed
-      - --allow-unauthenticated
-      - --timeout
-      - "900"
-      - --memory
-      - 2Gi
-      - --cpu
-      - "1"
 
 images:
   - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$BUILD_ID

@@ -217,6 +217,7 @@ def fill_contract_form(page, data: dict) -> None:
 
     screenshot(page, "04_first_page_filled")
     click_next_if_visible(page)
+    ensure_second_step(page)
     page.wait_for_timeout(2_000)
 
     dump_html(page, "04_after_first_next")
@@ -352,6 +353,10 @@ def fill_input(page, label: str, value: str) -> None:
     except Exception:
         pass
 
+    if fill_by_nearby_text_js(page, label_patterns, value):
+        log.info("Filled %s by nearby text JS fallback", label)
+        return
+
     log.warning("Could not fill input %s", label)
 
 
@@ -430,6 +435,10 @@ def fill_portal_date_direct(page, label: str, value: str) -> bool:
                 return True
             except Exception:
                 pass
+
+    if fill_by_nearby_text_js(page, role_names.get(label, [label]), formatted):
+        log.info("Filled %s by nearby text JS fallback as %s", label, formatted)
+        return True
 
     return False
 
@@ -588,6 +597,104 @@ def fill_by_visible_label(page, label: str, value: str) -> bool:
         except Exception:
             pass
     return False
+
+
+def ensure_second_step(page) -> None:
+    """Make sure the New Contract wizard has advanced to the PO/date step."""
+    for attempt in range(3):
+        try:
+            body_text = page.inner_text("body", timeout=3_000)
+            if "Purchase Order" in body_text or "Pricing Date" in body_text:
+                return
+        except Exception:
+            pass
+        if attempt == 0:
+            click_next_if_visible(page)
+        else:
+            click_button_by_text_js(page, "Next")
+        page.wait_for_timeout(1_500)
+    log.warning("Could not verify second New Contract wizard step after Next")
+
+
+def fill_by_nearby_text_js(page, labels: list[str], value: str) -> bool:
+    """Fill a Salesforce input by walking from visible label text to a nearby control."""
+    return bool(
+        page.evaluate(
+            """
+            ([labels, value]) => {
+                const clean = (text) => (text || '').replace(/\\*/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const targetLabels = labels.map(clean).filter(Boolean);
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width >= 0 && rect.height >= 0;
+                };
+                const setValue = (input) => {
+                    input.scrollIntoView({block: 'center', inline: 'nearest'});
+                    input.focus();
+                    const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (setter) setter.call(input, value);
+                    else input.value = value;
+                    input.dispatchEvent(new Event('input', {bubbles: true}));
+                    input.dispatchEvent(new Event('change', {bubbles: true}));
+                    input.dispatchEvent(new Event('blur', {bubbles: true}));
+                    return true;
+                };
+                const all = Array.from(document.querySelectorAll('label, span, div, lightning-formatted-text'));
+                for (const label of all) {
+                    const text = clean(label.textContent);
+                    if (!targetLabels.some(target => text.includes(target))) continue;
+                    let root = label;
+                    for (let depth = 0; depth < 8 && root; depth += 1, root = root.parentElement) {
+                        const inputs = Array.from(root.querySelectorAll('input:not([type="hidden"]), textarea'))
+                            .filter(input => !input.disabled && !input.readOnly && visible(input));
+                        if (inputs.length) return setValue(inputs[0]);
+                    }
+                    const xpath = document.evaluate(
+                        './/following::input[not(@type="hidden")][1] | .//following::textarea[1]',
+                        label,
+                        null,
+                        XPathResult.FIRST_ORDERED_NODE_TYPE,
+                        null
+                    );
+                    if (xpath.singleNodeValue && !xpath.singleNodeValue.disabled && visible(xpath.singleNodeValue)) {
+                        return setValue(xpath.singleNodeValue);
+                    }
+                }
+                return false;
+            }
+            """,
+            [labels, value],
+        )
+    )
+
+
+def click_button_by_text_js(page, text: str) -> bool:
+    return bool(
+        page.evaluate(
+            """
+            (text) => {
+                const target = text.trim().toLowerCase();
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width >= 0 && rect.height >= 0;
+                };
+                const buttons = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+                const button = buttons.find((el) => {
+                    const label = (el.textContent || el.value || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return label === target && !el.disabled && visible(el);
+                });
+                if (!button) return false;
+                button.scrollIntoView({block: 'center', inline: 'nearest'});
+                button.click();
+                return true;
+            }
+            """,
+            text,
+        )
+    )
 
 
 def field_root_by_label(page, label: str):
@@ -758,6 +865,9 @@ def click_save_button(page) -> None:
             return
         except Exception:
             pass
+    if click_button_by_text_js(page, "Save"):
+        page.wait_for_timeout(2_000)
+        return
     raise RuntimeError("Save button was not found on New Contract form")
 
 

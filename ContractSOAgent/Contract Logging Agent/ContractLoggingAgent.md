@@ -373,6 +373,8 @@ Pending for production readiness:
 - Production log check showed `/contract-confirm` was returning HTTP 200 quickly without reliable Playwright progress logs because contract creation was launched in a daemon background thread.
 - Fix added: `/contract-confirm` now runs JSW Steel Salesforce contract creation synchronously before returning, so Cloud Run keeps CPU active and Logs Explorer shows the actual creation path.
 - Added `[contract-create]` log milestones for login started, login completed, new contract form open, form fill, save, and generated Contract Number.
+- Production headless test reached the New Contract wizard but failed on page 2 with missing PO Number/date fields and missing Save button.
+- Fix added: after clicking `Next`, automation verifies the wizard advanced to the Purchase Order step, retries `Next` if needed, fills PO/date fields by walking from visible label text to the nearby input, and uses a JS Save-button fallback.
 - Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.

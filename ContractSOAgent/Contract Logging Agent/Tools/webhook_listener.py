@@ -76,13 +76,13 @@ def contract_webhook():
 
 @app.post("/contract-confirm")
 def contract_confirm():
-    data = request.get_json(force=True, silent=True) or {}
+    data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
     ticket_id = (data.get("ticket_id") or "").strip().upper()
     if not ticket_id:
         return jsonify({"status": "error", "detail": "missing ticket_id"}), 400
 
-    write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
     post_card(build_audit_card(data))
+    safe_write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
     threading.Thread(target=create_contract_after_confirm, args=(ticket_id, data), daemon=True).start()
     return jsonify({"status": "ok"}), 200
 
@@ -92,13 +92,13 @@ def process_ticket(ticket_id: str) -> None:
         ticket = fetch_jira_ticket(ticket_id)
         if ticket is None:
             post_text(f"Ticket {ticket_id} was not found in Jira.")
-            write_memory_step("fetch_jira_ticket", "failed", "Ticket not found", {"ticket_id": ticket_id})
+            safe_write_memory_step("fetch_jira_ticket", "failed", "Ticket not found", {"ticket_id": ticket_id})
             return
 
         details = prepare_contract_details(ticket)
         card = build_confirmation_card(details)
         post_card(card)
-        write_memory_step(
+        safe_write_memory_step(
             "post_confirmation_card",
             "success",
             f"Posted confirmation card for {ticket_id}",
@@ -117,7 +117,7 @@ def navigate_after_confirm(ticket_id: str) -> None:
     try:
         result = navigate_to_contract_page()
         post_card(build_navigation_success_card(ticket_id, result["url"]))
-        write_memory_step(
+        safe_write_memory_step(
             "navigate_contract_page",
             "success",
             f"Successfully navigated to Contract page for {ticket_id}",
@@ -134,7 +134,7 @@ def create_contract_after_confirm(ticket_id: str, data: dict) -> None:
         if not contract_number:
             raise RuntimeError("Generated Contract Number was not captured after Save")
         post_card(build_contract_created_card(ticket_id, contract_number))
-        write_memory_step(
+        safe_write_memory_step(
             "create_contract_in_portal",
             "success",
             f"Created contract {contract_number} for {ticket_id} on JSW Steel Community SF portal",
@@ -170,6 +170,32 @@ def extract_message_text(body: dict) -> str:
     return ""
 
 
+def normalise_confirm_payload(payload: dict) -> dict:
+    """Accept direct card fields or common Power Automate response wrappers."""
+    candidates = [
+        payload,
+        payload.get("data") if isinstance(payload.get("data"), dict) else None,
+        payload.get("body") if isinstance(payload.get("body"), dict) else None,
+        payload.get("response") if isinstance(payload.get("response"), dict) else None,
+    ]
+    body = payload.get("body")
+    if isinstance(body, dict):
+        candidates.extend(
+            [
+                body.get("data") if isinstance(body.get("data"), dict) else None,
+                body.get("response") if isinstance(body.get("response"), dict) else None,
+            ]
+        )
+    response = payload.get("response")
+    if isinstance(response, dict):
+        candidates.append(response.get("data") if isinstance(response.get("data"), dict) else None)
+
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("ticket_id"):
+            return candidate
+    return payload
+
+
 def handle_error(step: str, code: str, message: str, payload: dict) -> None:
     entry = {
         "timestamp": utc_now(),
@@ -186,9 +212,19 @@ def handle_error(step: str, code: str, message: str, payload: dict) -> None:
         "learning": None,
         "ticket_id": payload.get("ticket_id"),
     }
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOG_PATH, "a", encoding="utf-8") as log_file:
-        log_file.write(json.dumps(entry) + "\n")
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(entry) + "\n")
+    except Exception:
+        app.logger.exception("Could not write local error log")
+
+
+def safe_write_memory_step(step: str, status: str, detail: str, extra: dict | None = None) -> None:
+    try:
+        write_memory_step(step, status, detail, extra)
+    except Exception:
+        app.logger.exception("Could not write local memory step")
 
 
 def write_memory_step(step: str, status: str, detail: str, extra: dict | None = None) -> None:
@@ -205,6 +241,7 @@ def write_memory_step(step: str, status: str, detail: str, extra: dict | None = 
     )
     memory["last_run"] = utc_now()
     memory["last_action"] = detail
+    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     MEMORY_PATH.write_text(json.dumps(memory, indent=2), encoding="utf-8")
 
 

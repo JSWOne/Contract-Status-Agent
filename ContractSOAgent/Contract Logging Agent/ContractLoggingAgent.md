@@ -1,6 +1,6 @@
 # ContractLoggingAgent - Skill Instructions
 > **Parent Orchestrator:** ContractSOAgent  
-> Version: 1.3.0 | Phase: 2 | Status: Cloud Run service created; env vars + production Teams callback pending | Last Updated: 2026-05-06
+> Version: 1.5.0 | Phase: 2 | Status: Cloud Run env vars configured; production Teams callback pending | Last Updated: 2026-05-06
 
 ---
 
@@ -238,7 +238,7 @@ Contract Logging Agent has separate Cloud Run files so it does not overwrite the
 |------|---------|
 | `main_contract_logging.py` | Imports and exposes Flask `app` from `Tools/webhook_listener.py` |
 | `Dockerfile.contract-logging` | Builds a Playwright-ready container and runs `main_contract_logging:app` through gunicorn |
-| `cloudbuild-contract-logging.yaml` | Cloud Build config to build and push the `contract-logging-agent` image |
+| `cloudbuild-contract-logging.yaml` | Cloud Build config to build, push, and deploy the `contract-logging-agent` image |
 
 Cloud Run must receive all required secrets as environment variables or Secret Manager references.
 
@@ -251,13 +251,16 @@ Current deployed service:
 | Public URL | `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app` |
 | Health endpoint | `GET /health` returns `OK` |
 | Deployment type shown in Cloud Run | Container |
-| Latest deployed revision | `jsw-contract-logging-agent-00001-htc` |
-| Image tag used | `asia-south1-docker.pkg.dev/ai-for-jswone/contract-agents/contract-logging-agent:54e36ac8-c7c9-45a2-895e-543c11d3b0ce` |
+| Latest deployed revision | `jsw-contract-logging-agent-00003-f6d` |
+| Image tag used | `asia-south1-docker.pkg.dev/ai-for-jswone/contract-agents/contract-logging-agent:35306cb1-9da4-4d94-a469-f3ce998abf1e` |
+| Auto-deploy trigger | `jsw-contract-logging-agent-deploy` |
+| Auto-deploy branch | `deploy-to-statusrepo` |
+| Environment variables | Configured on Cloud Run revision `jsw-contract-logging-agent-00003-f6d` |
 
 Production safety note:
 
 - Existing Contract Status Agent service `jsw-contract-status-agent` was not redeployed.
-- Status service last deployment remains `2026-04-30T09:11:08Z`.
+- Status service stayed on revision `jsw-contract-status-agent-00041-22j`.
 - Logging service uses separate Cloud Run service, separate Dockerfile, separate entrypoint, and separate Cloud Build trigger.
 
 ---
@@ -341,13 +344,28 @@ Cloud Run deployment progress on 2026-05-06:
 - Built and pushed image successfully through Cloud Build.
 - Manually deployed separate Cloud Run service `jsw-contract-logging-agent` using signed-in user `milind.kumar@jsw.in`.
 - Verified `GET /health` returns `OK`.
+- Admin granted `roles/run.developer` to `sa-cloudbuild@ai-for-jswone.iam.gserviceaccount.com`.
+- Auto-deploy then failed on missing `iam.serviceaccounts.actAs` for runtime service account `729173585258-compute@developer.gserviceaccount.com`.
+- Admin granted `roles/iam.serviceAccountUser` to `sa-cloudbuild@ai-for-jswone.iam.gserviceaccount.com`.
+- Restored the Cloud Build deploy step in `cloudbuild-contract-logging.yaml`.
+- Reran trigger `jsw-contract-logging-agent-deploy`; build, image push, and Cloud Run deploy completed successfully.
+- New logging revision after successful auto-deploy: `jsw-contract-logging-agent-00002-rl8`.
+- Verified `GET /health` returns `OK` after auto-deploy.
+- Verified existing Contract Status Agent remained unchanged on revision `jsw-contract-status-agent-00041-22j`.
+- Configured Cloud Run environment variables on `jsw-contract-logging-agent` from local Contract Logging `.env`.
+- Forced `WEBHOOK_BASE_URL` to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app`.
+- Forced `PLAYWRIGHT_HEADLESS=True` for Cloud Run.
+- New logging revision after env var update: `jsw-contract-logging-agent-00003-f6d`.
+- Verified expected env var names are present without printing secret values.
+- Deleted temporary env-vars file from `C:\tmp`.
+- Verified `GET /health` returns `OK` after env var update.
 
 Pending for production readiness:
 
-- Configure Cloud Run environment variables or Secret Manager references for Contract Logging Agent.
-- Set `WEBHOOK_BASE_URL` to the Cloud Run URL.
 - Update Teams outgoing webhook callback URL to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-webhook`.
 - Update Power Automate Confirm callback URL to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-confirm`.
+- First production Teams confirm test reached Teams response acknowledgement, but the channel audit card did not appear.
+- Fix added: `/contract-confirm` now accepts common Power Automate response wrappers, posts the audit card before portal automation, and makes local memory/log writes non-blocking.
 - Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
-- Ask admin to grant `roles/run.developer` to `sa-cloudbuild@ai-for-jswone.iam.gserviceaccount.com` if automatic deploy-on-push is required.
-- After permission is granted, restore Cloud Build deploy step so pushes to `deploy-to-statusrepo` automatically update `jsw-contract-logging-agent`.
+- Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
+- Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.

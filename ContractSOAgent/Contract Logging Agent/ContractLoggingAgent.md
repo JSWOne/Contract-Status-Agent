@@ -1,23 +1,23 @@
 # ContractLoggingAgent - Skill Instructions
 > **Parent Orchestrator:** ContractSOAgent  
-> Version: 1.2.0 | Phase: 1 | Status: Process design updated | Last Updated: 2026-05-05
+> Version: 1.3.0 | Phase: 2 | Status: Cloud Run service created; env vars + production Teams callback pending | Last Updated: 2026-05-06
 
 ---
 
 ## 1. Objective
 
-Create new contracts in the JSW Steel portal after a user confirms the required contract details from Microsoft Teams.
+Create new contracts in the JSW Steel Community Salesforce portal after a user confirms the required contract details from Microsoft Teams.
 
-The first build phase stops after:
+The current build covers the full intended journey:
 
 1. User enters the Jira `O360` ticket number in the **Contract logging** Teams channel.
 2. Bot fetches / prepares the contract details and posts an Adaptive Card for confirmation.
 3. User clicks **Confirm**.
 4. Confirmed details are posted back into Teams for audit history.
-5. Agent logs into the JSW Steel portal and navigates to the Contract page.
-6. Agent posts a Teams message confirming successful navigation to the Contract page.
-
-Actual contract creation in the portal will be built in the next phase.
+5. Agent logs into the JSW Steel Community Salesforce portal.
+6. Agent opens the New Contract wizard, fills confirmed parameters, saves the contract, and extracts the generated Contract Number.
+7. Agent closes the browser after successful Contract Number extraction.
+8. Agent posts a Teams success card with the generated Contract Number.
 
 ---
 
@@ -31,8 +31,10 @@ Actual contract creation in the portal will be built in the next phase.
 | 4 | Bot / Workflow | Posts an Adaptive Card with the extracted contract parameters |
 | 5 | User | Reviews the Adaptive Card and clicks **Confirm** |
 | 6 | Bot / Workflow | Posts the confirmed details back into Teams for audit purposes |
-| 7 | Python Agent | Logs into JSW Steel portal and navigates to the Contract page |
-| 8 | Python Agent / Workflow | Posts Teams message that Contract page navigation was successful |
+| 7 | Python Agent | Logs into JSW Steel Community Salesforce portal |
+| 8 | Python Agent | Opens New Contract wizard, fills confirmed values, saves, and extracts generated Contract Number |
+| 9 | Python Agent | Closes browser after successful Contract Number extraction |
+| 10 | Python Agent / Workflow | Posts Teams success card with generated Contract Number |
 
 ---
 
@@ -171,10 +173,10 @@ This tool is now wired into:
 
 Current save behavior:
 
-- The script fills the form.
-- It waits up to 10 minutes for the contract to be saved.
-- For local testing, user can manually review and click **Save**.
-- Fully automated Save can be added after the filled form is confirmed stable.
+- The script fills the form and clicks **Save** automatically.
+- Contract Start Date is always set to today's date because the portal rejects past dates.
+- Purchase Order Date is converted to Salesforce portal format such as `24-Apr-2026`.
+- After Save, the script waits for the generated Contract detail page, extracts the Contract Number, closes the browser, and returns the result to Teams / CLI.
 
 ---
 
@@ -236,9 +238,27 @@ Contract Logging Agent has separate Cloud Run files so it does not overwrite the
 |------|---------|
 | `main_contract_logging.py` | Imports and exposes Flask `app` from `Tools/webhook_listener.py` |
 | `Dockerfile.contract-logging` | Builds a Playwright-ready container and runs `main_contract_logging:app` through gunicorn |
-| `cloudbuild-contract-logging.yaml` | Optional Cloud Build config to build and deploy `contract-logging-agent` |
+| `cloudbuild-contract-logging.yaml` | Cloud Build config to build and push the `contract-logging-agent` image |
 
 Cloud Run must receive all required secrets as environment variables or Secret Manager references.
+
+Current deployed service:
+
+| Item | Value |
+|------|-------|
+| Cloud Run service | `jsw-contract-logging-agent` |
+| Region | `asia-south1` |
+| Public URL | `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app` |
+| Health endpoint | `GET /health` returns `OK` |
+| Deployment type shown in Cloud Run | Container |
+| Latest deployed revision | `jsw-contract-logging-agent-00001-htc` |
+| Image tag used | `asia-south1-docker.pkg.dev/ai-for-jswone/contract-agents/contract-logging-agent:54e36ac8-c7c9-45a2-895e-543c11d3b0ce` |
+
+Production safety note:
+
+- Existing Contract Status Agent service `jsw-contract-status-agent` was not redeployed.
+- Status service last deployment remains `2026-04-30T09:11:08Z`.
+- Logging service uses separate Cloud Run service, separate Dockerfile, separate entrypoint, and separate Cloud Build trigger.
 
 ---
 
@@ -259,7 +279,7 @@ The Contract Logging Agent now covers the full Contract creation journey:
 | Post created Contract Number to Teams | Built and locally tested through CLI `--post-to-teams` |
 | Close browser after successful Contract Number extraction | Built |
 
-Remaining local validation is the actual Teams webhook + Power Automate Confirm callback journey.
+Local validation completed for CLI and portal creation. Remaining validation is production Teams webhook + Power Automate Confirm callback against Cloud Run.
 
 ---
 
@@ -312,11 +332,22 @@ Current New Contract automation learnings:
 - Contract Start Date must always be today's date because the portal rejects past start dates.
 - After filling the New Contract form, automation clicks `Save`, waits for the generated contract page, extracts the Contract Number, and posts a Teams success card saying the SO Contract was created successfully on JSW Steel Community SF portal.
 
-Remaining:
+Cloud Run deployment progress on 2026-05-06:
 
-- Test the full Teams flow: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
-- Push latest code to GitHub.
-- Configure Cloud Run environment variables or Secret Manager references.
-- Deploy Contract Logging Agent using `Dockerfile.contract-logging`.
-- Update Teams outgoing webhook and Power Automate callback URLs to the Cloud Run service.
-- Run one production Teams test after deployment.
+- Created Artifact Registry repository `contract-agents` in `asia-south1`.
+- Created separate Cloud Build trigger `jsw-contract-logging-agent-deploy` on branch `deploy-to-statusrepo`.
+- Initial deploy-through-Cloud-Build failed because service account `sa-cloudbuild@ai-for-jswone.iam.gserviceaccount.com` lacks Cloud Run permission `run.services.get`.
+- Changed `cloudbuild-contract-logging.yaml` to build and push the image only.
+- Built and pushed image successfully through Cloud Build.
+- Manually deployed separate Cloud Run service `jsw-contract-logging-agent` using signed-in user `milind.kumar@jsw.in`.
+- Verified `GET /health` returns `OK`.
+
+Pending for production readiness:
+
+- Configure Cloud Run environment variables or Secret Manager references for Contract Logging Agent.
+- Set `WEBHOOK_BASE_URL` to the Cloud Run URL.
+- Update Teams outgoing webhook callback URL to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-webhook`.
+- Update Power Automate Confirm callback URL to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-confirm`.
+- Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
+- Ask admin to grant `roles/run.developer` to `sa-cloudbuild@ai-for-jswone.iam.gserviceaccount.com` if automatic deploy-on-push is required.
+- After permission is granted, restore Cloud Build deploy step so pushes to `deploy-to-statusrepo` automatically update `jsw-contract-logging-agent`.

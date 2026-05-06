@@ -45,7 +45,7 @@ def build_confirmation_card(data: dict) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
-        "version": "1.4",
+        "version": "1.2",
         "body": [
             {
                 "type": "TextBlock",
@@ -73,8 +73,6 @@ def build_confirmation_card(data: dict) -> dict:
                 "id": "distribution_channel",
                 "label": "Distribution Channel",
                 "style": "compact",
-                "isRequired": True,
-                "errorMessage": "Please select Distribution Channel",
                 "value": data.get("distribution_channel", ""),
                 "choices": [
                     {"title": "OEM", "value": "OEM"},
@@ -93,7 +91,6 @@ def build_confirmation_card(data: dict) -> dict:
             {
                 "type": "Action.Submit",
                 "title": "Confirm",
-                "style": "positive",
                 "data": {"ticket_id": ticket_id},
             }
         ],
@@ -105,7 +102,7 @@ def build_audit_card(data: dict) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
-        "version": "1.4",
+        "version": "1.2",
         "body": [
             {
                 "type": "TextBlock",
@@ -124,7 +121,7 @@ def build_navigation_success_card(ticket_id: str, url: str) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
-        "version": "1.4",
+        "version": "1.2",
         "body": [
             {
                 "type": "TextBlock",
@@ -143,7 +140,7 @@ def build_contract_created_card(ticket_id: str, contract_number: str) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
-        "version": "1.4",
+        "version": "1.2",
         "body": [
             {
                 "type": "TextBlock",

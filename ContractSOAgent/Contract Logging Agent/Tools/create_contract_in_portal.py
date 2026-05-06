@@ -83,15 +83,21 @@ def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
         browser = p.chromium.launch(headless=headless, args=["--start-maximized"])
         page = browser.new_page(no_viewport=True)
         try:
+            print(f"[contract-create] {ticket_id}: login started", flush=True)
             login(page)
+            print(f"[contract-create] {ticket_id}: login completed", flush=True)
+            print(f"[contract-create] {ticket_id}: opening new contract form", flush=True)
             navigate_to_new_contract(page)
+            print(f"[contract-create] {ticket_id}: filling contract form", flush=True)
             fill_contract_form(page, contract_data)
+            print(f"[contract-create] {ticket_id}: saving contract", flush=True)
             click_save_button(page)
             log.info("Waiting for save for ticket %s", ticket_id)
             wait_for_save(page, timeout_ms=600_000)
             contract_number = extract_contract_number(page)
             if not contract_number:
                 raise RuntimeError("Contract was saved but generated Contract Number was not captured")
+            print(f"[contract-create] {ticket_id}: created contract {contract_number}", flush=True)
             return contract_number
         finally:
             browser.close()

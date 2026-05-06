@@ -370,6 +370,9 @@ Pending for production readiness:
 - Fix added: confirmation/audit/success cards now use Teams Flowbot-safe Adaptive Card version `1.2`; removed newer `isRequired`, `errorMessage`, and action `style` properties from the confirmation card.
 - After confirmed-details audit card, agent posts progress Adaptive Card: `Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.`
 - Progress notification uses `adaptive_card` payload because the Power Automate Teams posting flow accepts card payloads reliably; plain `text` payload did not show in the channel during production test.
+- Production log check showed `/contract-confirm` was returning HTTP 200 quickly without reliable Playwright progress logs because contract creation was launched in a daemon background thread.
+- Fix added: `/contract-confirm` now runs JSW Steel Salesforce contract creation synchronously before returning, so Cloud Run keeps CPU active and Logs Explorer shows the actual creation path.
+- Added `[contract-create]` log milestones for login started, login completed, new contract form open, form fill, save, and generated Contract Number.
 - Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.

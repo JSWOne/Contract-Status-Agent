@@ -82,14 +82,16 @@ def contract_confirm():
     if not ticket_id:
         return jsonify({"status": "error", "detail": "missing ticket_id"}), 400
 
+    app.logger.info("Contract confirm received for %s", ticket_id)
     post_card(build_audit_card(data))
     try:
         post_card(build_contract_creation_started_card(ticket_id))
     except Exception as exc:
         app.logger.exception("Could not post contract creation started card: %s", exc)
     safe_write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
-    threading.Thread(target=create_contract_after_confirm, args=(ticket_id, data), daemon=True).start()
-    return jsonify({"status": "ok"}), 200
+    result = create_contract_after_confirm(ticket_id, data)
+    status_code = 200 if result.get("status") == "success" else 500
+    return jsonify(result), status_code
 
 
 def process_ticket(ticket_id: str) -> None:
@@ -133,11 +135,13 @@ def navigate_after_confirm(ticket_id: str) -> None:
         post_text(f"Could not navigate to Contract page for {ticket_id}: {exc}")
 
 
-def create_contract_after_confirm(ticket_id: str, data: dict) -> None:
+def create_contract_after_confirm(ticket_id: str, data: dict) -> dict:
     try:
+        app.logger.info("Starting JSW Steel Salesforce contract creation for %s", ticket_id)
         contract_number = create_contract_in_portal(data, ticket_id)
         if not contract_number:
             raise RuntimeError("Generated Contract Number was not captured after Save")
+        app.logger.info("Created JSW Steel Salesforce contract %s for %s", contract_number, ticket_id)
         post_card(build_contract_created_card(ticket_id, contract_number))
         safe_write_memory_step(
             "create_contract_in_portal",
@@ -145,9 +149,12 @@ def create_contract_after_confirm(ticket_id: str, data: dict) -> None:
             f"Created contract {contract_number} for {ticket_id} on JSW Steel Community SF portal",
             {"ticket_id": ticket_id, "contract_number": contract_number, "input": data},
         )
+        return {"status": "success", "ticket_id": ticket_id, "contract_number": contract_number}
     except Exception as exc:
+        app.logger.exception("Contract creation failed for %s: %s", ticket_id, exc)
         handle_error("create_contract_in_portal", type(exc).__name__, str(exc), {"ticket_id": ticket_id})
         post_text(f"Could not create contract for {ticket_id}: {exc}")
+        return {"status": "error", "ticket_id": ticket_id, "detail": str(exc)}
 
 
 def validate_hmac(body: bytes, auth_header: str, token: str = "") -> bool:

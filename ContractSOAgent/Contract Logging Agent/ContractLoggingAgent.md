@@ -379,6 +379,7 @@ Pending for production readiness:
 - Teams failure card is intentionally short: `Sorry, Not able to create new contract for <ticket> due to this error.` with a status note to check Cloud Run logs.
 - Cloud Run logs now show detailed field-by-field progress: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, PO Number, PO Date, Contract Start Date, Contract End Date, and Save.
 - Cloud Run browser now uses a fixed 1920x1080 viewport because headless Salesforce rendering can differ from the local visible browser and hide/change the New Contract modal/footer behavior.
+- Confirmation/adaptive-card posting to Teams now retries Power Automate calls up to 4 times with backoff and `Connection: close`, because Cloud Run saw a transient `urllib3.exceptions.SSLError: EOF occurred in violation of protocol` while posting the card.
 - Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.

@@ -110,10 +110,16 @@ def process_ticket(ticket_id: str) -> None:
 
     except (JiraAuthError, JiraConnectionError) as exc:
         handle_error("process_ticket", "JIRA_ERROR", str(exc), {"ticket_id": ticket_id})
-        post_text(f"Could not fetch Jira ticket {ticket_id}: {exc}")
+        try:
+            post_text(f"Could not fetch Jira ticket {ticket_id}: {exc}")
+        except Exception as notify_exc:
+            app.logger.exception("Could not post Jira error to Teams for %s: %s", ticket_id, notify_exc)
     except Exception as exc:
         handle_error("process_ticket", type(exc).__name__, str(exc), {"ticket_id": ticket_id})
-        post_text(f"Unexpected error while processing {ticket_id}: {exc}")
+        try:
+            post_text(f"Unexpected error while processing {ticket_id}: {exc}")
+        except Exception as notify_exc:
+            app.logger.exception("Could not post process_ticket error to Teams for %s: %s", ticket_id, notify_exc)
 
 
 def navigate_after_confirm(ticket_id: str) -> None:

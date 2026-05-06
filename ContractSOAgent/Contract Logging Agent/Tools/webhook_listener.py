@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request
 
 from build_contract_card import (
     build_audit_card,
+    build_contract_creation_started_card,
     build_contract_created_card,
     build_confirmation_card,
     build_navigation_success_card,
@@ -82,10 +83,10 @@ def contract_confirm():
         return jsonify({"status": "error", "detail": "missing ticket_id"}), 400
 
     post_card(build_audit_card(data))
-    post_text(
-        f"Creating Contract on JSW Steel Salesforce for {ticket_id}. "
-        "I will post the Contract number card to this channel shortly."
-    )
+    try:
+        post_card(build_contract_creation_started_card(ticket_id))
+    except Exception as exc:
+        app.logger.exception("Could not post contract creation started card: %s", exc)
     safe_write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
     threading.Thread(target=create_contract_after_confirm, args=(ticket_id, data), daemon=True).start()
     return jsonify({"status": "ok"}), 200

@@ -368,7 +368,8 @@ Pending for production readiness:
 - Fix added: `/contract-confirm` now accepts common Power Automate response wrappers, posts the audit card before portal automation, and makes local memory/log writes non-blocking.
 - Production confirmation-card post then failed in Power Automate at `Post adaptive card and wait for a response` with `MissingOrInvalidBotMessageRequest`.
 - Fix added: confirmation/audit/success cards now use Teams Flowbot-safe Adaptive Card version `1.2`; removed newer `isRequired`, `errorMessage`, and action `style` properties from the confirmation card.
-- After confirmed-details audit card, agent posts progress message: `Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.`
+- After confirmed-details audit card, agent posts progress Adaptive Card: `Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.`
+- Progress notification uses `adaptive_card` payload because the Power Automate Teams posting flow accepts card payloads reliably; plain `text` payload did not show in the channel during production test.
 - Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.

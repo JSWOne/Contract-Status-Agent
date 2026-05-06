@@ -163,6 +163,27 @@ def build_contract_created_card(ticket_id: str, contract_number: str) -> dict:
     }
 
 
+def build_contract_creation_started_card(ticket_id: str) -> dict:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": (
+                    f"Creating Contract on JSW Steel Salesforce for {ticket_id}. "
+                    "I will post the Contract number card to this channel shortly."
+                ),
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Accent",
+                "wrap": True,
+            }
+        ],
+    }
+
+
 def contract_facts(data: dict) -> list[dict]:
     labels = [
         ("Jira Ticket", "ticket_id"),

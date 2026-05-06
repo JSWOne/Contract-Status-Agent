@@ -5,7 +5,7 @@ steps:
       - -f
       - Dockerfile.contract-logging
       - -t
-      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$COMMIT_SHA
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$BUILD_ID
       - .
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
@@ -15,7 +15,7 @@ steps:
       - deploy
       - jsw-contract-logging-agent
       - --image
-      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$COMMIT_SHA
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$BUILD_ID
       - --region
       - asia-south1
       - --platform
@@ -29,4 +29,4 @@ steps:
       - "1"
 
 images:
-  - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$COMMIT_SHA
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/contract-logging-agent:$BUILD_ID

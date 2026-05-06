@@ -82,13 +82,18 @@ def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless, args=["--start-maximized"])
-        page = browser.new_page(no_viewport=True)
+        page = browser.new_page(viewport={"width": 1920, "height": 1080})
         try:
             print(f"[contract-create] {ticket_id}: login started", flush=True)
             login(page)
             print(f"[contract-create] {ticket_id}: login completed", flush=True)
             print(f"[contract-create] {ticket_id}: opening new contract form", flush=True)
             navigate_to_new_contract(page)
+            print(
+                f"[contract-create] {ticket_id}: new contract page ready "
+                f"{compact_json(collect_form_diagnostics(page, contract_data), max_len=1800)}",
+                flush=True,
+            )
             print(f"[contract-create] {ticket_id}: filling contract form", flush=True)
             fill_contract_form(page, contract_data)
             print(
@@ -158,6 +163,7 @@ def navigate_to_new_contract(page) -> None:
         page.goto(NEW_CONTRACT_URL, wait_until="domcontentloaded", timeout=20_000)
 
     page.wait_for_timeout(4_000)
+    ensure_new_contract_form_ready(page)
     screenshot(page, "03_new_contract_form")
 
 
@@ -204,37 +210,39 @@ def click_new_button(page) -> bool:
 def fill_contract_form(page, data: dict) -> None:
     validate_contract_data(data)
     dump_html(page, "03_new_contract_form")
-    fill_or_select(page, "Contract Type", data.get("contract_type", ""))
+    ensure_new_contract_form_ready(page)
+    run_fill_step(page, "Contract Type", data.get("contract_type", ""), lambda: fill_or_select(page, "Contract Type", data.get("contract_type", "")))
     page.wait_for_timeout(1_000)
-    fill_lookup(page, "Sold to Party", data.get("sold_to_party", ""))
+    run_fill_step(page, "Sold to Party", data.get("sold_to_party", ""), lambda: fill_lookup(page, "Sold to Party", data.get("sold_to_party", "")))
     page.wait_for_timeout(1_500)
     clear_lookup(page, "Ship to Party")
-    fill_lookup(page, "Ship to Party", data.get("ship_to_party", ""))
+    run_fill_step(page, "Ship to Party", data.get("ship_to_party", ""), lambda: fill_lookup(page, "Ship to Party", data.get("ship_to_party", "")))
     page.wait_for_timeout(1_500)
     clear_lookup(page, "Payer")
-    fill_lookup(page, "Payer", data.get("payer", ""))
+    run_fill_step(page, "Payer", data.get("payer", ""), lambda: fill_lookup(page, "Payer", data.get("payer", "")))
     page.wait_for_timeout(1_000)
-    fill_lookup(page, "Division", data.get("division", ""))
+    run_fill_step(page, "Division", data.get("division", ""), lambda: fill_lookup(page, "Division", data.get("division", "")))
     page.wait_for_timeout(1_000)
-    fill_or_select(page, "Distribution Channel", data.get("distribution_channel", ""))
+    run_fill_step(page, "Distribution Channel", data.get("distribution_channel", ""), lambda: fill_or_select(page, "Distribution Channel", data.get("distribution_channel", "")))
     page.wait_for_timeout(1_000)
-    fill_or_select(page, "Contract Source", data.get("contract_source", "Standard"))
+    run_fill_step(page, "Contract Source", data.get("contract_source", "Standard"), lambda: fill_or_select(page, "Contract Source", data.get("contract_source", "Standard")))
     page.wait_for_timeout(1_000)
 
     screenshot(page, "04_first_page_filled")
+    log_step("clicking Next on New Contract first page")
     click_next_if_visible(page)
     ensure_second_step(page)
     page.wait_for_timeout(2_000)
 
     dump_html(page, "04_after_first_next")
     screenshot(page, "04_after_first_next")
-    fill_input(page, "PO Number", data.get("po_number", ""))
+    run_fill_step(page, "PO Number", data.get("po_number", ""), lambda: fill_input(page, "PO Number", data.get("po_number", "")))
     page.wait_for_timeout(500)
-    fill_date(page, "PO Date", data.get("po_date", ""))
+    run_fill_step(page, "PO Date", data.get("po_date", ""), lambda: fill_date(page, "PO Date", data.get("po_date", "")))
     page.wait_for_timeout(500)
-    fill_date(page, "Contract Start Date", today_date())
+    run_fill_step(page, "Contract Start Date", today_date(), lambda: fill_date(page, "Contract Start Date", today_date()))
     page.wait_for_timeout(500)
-    fill_date(page, "Contract End Date", data.get("contract_end_date", ""))
+    run_fill_step(page, "Contract End Date", data.get("contract_end_date", ""), lambda: fill_date(page, "Contract End Date", data.get("contract_end_date", "")))
     page.wait_for_timeout(500)
     print(
         "[contract-create] page2 values "
@@ -264,6 +272,35 @@ def validate_contract_data(data: dict) -> None:
     missing = [label for key, label in required.items() if not str(data.get(key, "")).strip()]
     if missing:
         raise RuntimeError("Missing required contract field(s): " + ", ".join(missing))
+
+
+def log_step(message: str) -> None:
+    print(f"[contract-create] {message}", flush=True)
+
+
+def run_fill_step(page, label: str, value: str, action) -> None:
+    expected = format_portal_date(value) if "Date" in label else value
+    log_step(f"filling {label} with {expected or '-'}")
+    action()
+    observed = read_value_by_nearby_text_js(page, label_variants(label))
+    log_step(f"filled {label}; observed={observed or '<blank>'}")
+
+
+def ensure_new_contract_form_ready(page) -> None:
+    for _ in range(3):
+        try:
+            body_text = page.inner_text("body", timeout=4_000)
+            if "New Contract" in body_text and "Contract Type" in body_text and "Sold To Party" in body_text:
+                return
+        except Exception:
+            pass
+        page.wait_for_timeout(2_000)
+
+    diagnostics = collect_form_diagnostics(page, {})
+    raise RuntimeError(
+        "New Contract form was not ready before filling. Diagnostics: "
+        + compact_json(diagnostics, max_len=1800)
+    )
 
 
 def fill_or_select(page, label: str, value: str) -> None:

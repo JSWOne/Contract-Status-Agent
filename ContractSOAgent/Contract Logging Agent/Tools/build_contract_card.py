@@ -165,8 +165,8 @@ def build_contract_created_card(ticket_id: str, contract_number: str) -> dict:
 
 def build_contract_creation_failed_card(ticket_id: str, error_message: str) -> dict:
     safe_error = (error_message or "Unknown error").strip()
-    if len(safe_error) > 900:
-        safe_error = safe_error[:897] + "..."
+    if len(safe_error) > 1600:
+        safe_error = safe_error[:1597] + "..."
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",

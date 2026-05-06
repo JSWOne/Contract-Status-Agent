@@ -376,6 +376,7 @@ Pending for production readiness:
 - Production headless test reached the New Contract wizard but failed on page 2 with missing PO Number/date fields and missing Save button.
 - Fix added: after clicking `Next`, automation verifies the wizard advanced to the Purchase Order step, retries `Next` if needed, fills PO/date fields by walking from visible label text to the nearby input, and uses a JS Save-button fallback.
 - If JSW Steel Salesforce contract creation fails, Cloud Run posts a Teams failure Adaptive Card: `Sorry, Not able to create new contract for <ticket> due to this error.` with the captured error reason.
+- Failure diagnostics now include Cloud Run field-state details such as expected values, observed page values, current URL/title, visible buttons, and a body hint when Save or form-fill fails.
 - Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.

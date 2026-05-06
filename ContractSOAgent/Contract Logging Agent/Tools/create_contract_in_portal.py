@@ -8,6 +8,7 @@ C:\\Users\\2751342\\OneDrive - JSW\\Desktop\\VS Code\\SO Contract Agent\\Contrac
 """
 
 import logging
+import json
 import os
 import re
 import time
@@ -90,8 +91,13 @@ def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
             navigate_to_new_contract(page)
             print(f"[contract-create] {ticket_id}: filling contract form", flush=True)
             fill_contract_form(page, contract_data)
+            print(
+                f"[contract-create] {ticket_id}: form diagnostics "
+                f"{json.dumps(collect_form_diagnostics(page, contract_data), ensure_ascii=True)}",
+                flush=True,
+            )
             print(f"[contract-create] {ticket_id}: saving contract", flush=True)
-            click_save_button(page)
+            click_save_button(page, contract_data)
             log.info("Waiting for save for ticket %s", ticket_id)
             wait_for_save(page, timeout_ms=600_000)
             contract_number = extract_contract_number(page)
@@ -230,6 +236,11 @@ def fill_contract_form(page, data: dict) -> None:
     page.wait_for_timeout(500)
     fill_date(page, "Contract End Date", data.get("contract_end_date", ""))
     page.wait_for_timeout(500)
+    print(
+        "[contract-create] page2 values "
+        + json.dumps(collect_form_diagnostics(page, data), ensure_ascii=True),
+        flush=True,
+    )
     screenshot(page, "04_form_filled")
 
 
@@ -697,6 +708,132 @@ def click_button_by_text_js(page, text: str) -> bool:
     )
 
 
+def collect_form_diagnostics(page, expected: dict) -> dict:
+    labels = {
+        "contract_type": ["Contract Type"],
+        "sold_to_party": ["Sold To Party", "Sold to Party"],
+        "ship_to_party": ["Ship To Party", "Ship to Party"],
+        "payer": ["Payer"],
+        "division": ["Division"],
+        "distribution_channel": ["Distribution Channel"],
+        "contract_source": ["Contract Source"],
+        "po_number": ["Purchase Order No.", "PO Number"],
+        "po_date": ["Purchase Order Date", "PO Date"],
+        "contract_start_date": ["Contract Start Date"],
+        "contract_end_date": ["Contract End Date"],
+    }
+    observed = {}
+    for key, variants in labels.items():
+        observed[key] = read_value_by_nearby_text_js(page, variants)
+
+    return {
+        "url": safe_page_value(lambda: page.url),
+        "title": safe_page_value(page.title),
+        "expected": {
+            "contract_type": expected.get("contract_type"),
+            "sold_to_party": expected.get("sold_to_party"),
+            "ship_to_party": expected.get("ship_to_party"),
+            "payer": expected.get("payer"),
+            "division": expected.get("division"),
+            "distribution_channel": expected.get("distribution_channel"),
+            "contract_source": expected.get("contract_source"),
+            "po_number": expected.get("po_number"),
+            "po_date": format_portal_date(expected.get("po_date", "")),
+            "contract_start_date": format_portal_date(today_date()),
+            "contract_end_date": format_portal_date(expected.get("contract_end_date", "")),
+        },
+        "observed": observed,
+        "buttons": visible_button_texts(page),
+        "body_hint": visible_body_hint(page),
+    }
+
+
+def read_value_by_nearby_text_js(page, labels: list[str]) -> str:
+    try:
+        return str(
+            page.evaluate(
+                """
+                (labels) => {
+                    const clean = (text) => (text || '').replace(/\\*/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const targetLabels = labels.map(clean).filter(Boolean);
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width >= 0 && rect.height >= 0;
+                    };
+                    const valueOf = (el) => {
+                        if (!el) return '';
+                        if (el.matches('input, textarea, select')) return el.value || '';
+                        const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+                        return text;
+                    };
+                    const all = Array.from(document.querySelectorAll('label, span, div, lightning-formatted-text'));
+                    for (const label of all) {
+                        const text = clean(label.textContent);
+                        if (!targetLabels.some(target => text.includes(target))) continue;
+                        let root = label;
+                        for (let depth = 0; depth < 8 && root; depth += 1, root = root.parentElement) {
+                            const controls = Array.from(root.querySelectorAll('input:not([type="hidden"]), textarea, select, lightning-base-combobox-formatted-text, lightning-formatted-text'))
+                                .filter(visible);
+                            for (const control of controls) {
+                                const value = valueOf(control);
+                                if (value && !targetLabels.some(target => clean(value).includes(target))) return value;
+                            }
+                        }
+                    }
+                    return '';
+                }
+                """,
+                labels,
+            )
+        )
+    except Exception:
+        return ""
+
+
+def visible_button_texts(page) -> list[str]:
+    try:
+        values = page.evaluate(
+            """
+            () => Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"]'))
+                .filter((el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+                })
+                .map((el) => (el.textContent || el.value || el.getAttribute('aria-label') || el.title || '').replace(/\\s+/g, ' ').trim())
+                .filter(Boolean)
+                .slice(-20)
+            """
+        )
+        return [str(item) for item in values]
+    except Exception:
+        return []
+
+
+def visible_body_hint(page) -> str:
+    try:
+        text = page.inner_text("body", timeout=2_000)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[-900:]
+    except Exception:
+        return ""
+
+
+def safe_page_value(func) -> str:
+    try:
+        return str(func())
+    except Exception:
+        return ""
+
+
+def compact_json(value: dict, max_len: int = 1600) -> str:
+    text = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
+
 def field_root_by_label(page, label: str):
     escaped = xpath_literal(label)
     return page.locator(
@@ -849,7 +986,7 @@ def click_next_if_visible(page) -> bool:
     return False
 
 
-def click_save_button(page) -> None:
+def click_save_button(page, contract_data: dict | None = None) -> None:
     screenshot(page, "04_before_save")
     for selector_fn in (
         lambda: page.get_by_role("button", name=re.compile("^Save$", re.IGNORECASE)).first,
@@ -868,7 +1005,11 @@ def click_save_button(page) -> None:
     if click_button_by_text_js(page, "Save"):
         page.wait_for_timeout(2_000)
         return
-    raise RuntimeError("Save button was not found on New Contract form")
+    diagnostics = collect_form_diagnostics(page, contract_data or {})
+    raise RuntimeError(
+        "Save button was not found on New Contract form. Diagnostics: "
+        + compact_json(diagnostics, max_len=1600)
+    )
 
 
 def click_option(page, value: str) -> bool:

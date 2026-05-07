@@ -35,8 +35,83 @@ load_dotenv(Path(__file__).with_name(".env"))
 app = Flask(__name__)
 TICKET_PATTERN = re.compile(r"\b(O360-\d+)\b", re.IGNORECASE)
 BASE_DIR = Path(__file__).parent.parent
-LOG_PATH = BASE_DIR / "Logs" / "error.log"
+# /app is read-only in Cloud Run — use /tmp for local files
+LOG_PATH = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else BASE_DIR / "Logs" / "error.log"
 MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
+
+GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
+GCS_ERROR_LOG_BLOB = "contract-logging-agent/error_memory.json"
+
+
+def _gcs_client():
+    try:
+        from google.cloud import storage
+        return storage.Client()
+    except Exception:
+        return None
+
+
+def _read_gcs_error_log() -> dict:
+    if not GCS_BUCKET:
+        return {"errors": [], "successes": []}
+    try:
+        client = _gcs_client()
+        if not client:
+            return {"errors": [], "successes": []}
+        blob = client.bucket(GCS_BUCKET).blob(GCS_ERROR_LOG_BLOB)
+        if not blob.exists():
+            return {"errors": [], "successes": []}
+        return json.loads(blob.download_as_text())
+    except Exception:
+        app.logger.exception("Could not read GCS error log")
+        return {"errors": [], "successes": []}
+
+
+def _write_gcs_error_log(data: dict) -> None:
+    if not GCS_BUCKET:
+        return
+    try:
+        client = _gcs_client()
+        if not client:
+            return
+        blob = client.bucket(GCS_BUCKET).blob(GCS_ERROR_LOG_BLOB)
+        blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+    except Exception:
+        app.logger.exception("Could not write GCS error log")
+
+
+def record_contract_error(ticket_id: str, data: dict, error_message: str) -> None:
+    log = _read_gcs_error_log()
+    log.setdefault("errors", []).append({
+        "timestamp": utc_now(),
+        "ticket_id": ticket_id,
+        "contract_type": data.get("contract_type"),
+        "distribution_channel": data.get("distribution_channel"),
+        "division": data.get("division"),
+        "error_message": error_message[:500],
+        "resolved": False,
+    })
+    # Keep last 200 error entries
+    log["errors"] = log["errors"][-200:]
+    _write_gcs_error_log(log)
+
+
+def record_contract_success(ticket_id: str, data: dict, contract_number: str) -> None:
+    log = _read_gcs_error_log()
+    log.setdefault("successes", []).append({
+        "timestamp": utc_now(),
+        "ticket_id": ticket_id,
+        "contract_type": data.get("contract_type"),
+        "distribution_channel": data.get("distribution_channel"),
+        "division": data.get("division"),
+        "contract_number": contract_number,
+    })
+    # Mark any prior unresolved errors for same ticket as resolved
+    for entry in log.get("errors", []):
+        if entry.get("ticket_id") == ticket_id and not entry.get("resolved"):
+            entry["resolved"] = True
+    log["successes"] = log["successes"][-200:]
+    _write_gcs_error_log(log)
 
 
 @app.get("/health")
@@ -190,10 +265,12 @@ def create_contract_after_confirm(ticket_id: str, data: dict) -> dict:
             f"Created contract {contract_number} for {ticket_id} on JSW Steel Community SF portal",
             {"ticket_id": ticket_id, "contract_number": contract_number, "input": data},
         )
+        record_contract_success(ticket_id, data, contract_number)
         return {"status": "success", "ticket_id": ticket_id, "contract_number": contract_number}
     except Exception as exc:
         app.logger.exception("Contract creation failed for %s: %s", ticket_id, exc)
         handle_error("create_contract_in_portal", type(exc).__name__, str(exc), {"ticket_id": ticket_id})
+        record_contract_error(ticket_id, data, str(exc))
         try:
             post_card(build_contract_creation_failed_card(ticket_id, str(exc)))
         except Exception as notify_exc:

@@ -699,17 +699,30 @@ SECOND_STEP_INDICATORS = (
     "Contract Receiving Date",
 )
 
+# Page-1 fields — if these are gone from body text, we've navigated past step 1
+_STEP1_MARKER = "Contract Type"
+
 
 def ensure_second_step(page) -> None:
-    """Make sure the New Contract wizard has advanced past the first page."""
+    """Advance past first wizard page; retries Next if page hasn't moved (handles ZCQT slow server validation)."""
+    initial_url = page.url
     click_next_if_visible(page)
-    # Poll up to 12 seconds for the second step to render — page transition can be slow
-    for _ in range(12):
+    diagnostics = {}
+    for attempt in range(20):
         page.wait_for_timeout(1_000)
         try:
-            body_text = page.inner_text("body", timeout=2_000)
-            if any(indicator in body_text for indicator in SECOND_STEP_INDICATORS):
+            # URL change is the most reliable signal — works for any contract type
+            if page.url != initial_url:
                 return
+            body_text = page.inner_text("body", timeout=2_000)
+            if any(ind in body_text for ind in SECOND_STEP_INDICATORS):
+                return
+            # If step-1 marker disappeared, we're past page 1 even if URL didn't change
+            if _STEP1_MARKER not in body_text:
+                return
+            # Retry Next click at 5s and 10s — ZCQT server-side validation can be slow
+            if attempt in (4, 9):
+                click_next_if_visible(page)
         except Exception:
             pass
     diagnostics = collect_form_diagnostics(page, {})

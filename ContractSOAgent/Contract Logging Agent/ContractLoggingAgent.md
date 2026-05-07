@@ -413,3 +413,14 @@ Final Playwright production rules saved on 2026-05-07:
 - Contract Source is a Salesforce picklist, not a text input. If Contract Source is not selected, the wizard can stay on the first page and later PO/date fill logs become misleading. Do not fall back to normal input typing for Contract Source or Distribution Channel.
 - After clicking `Next`, the automation must raise immediately if the Purchase Order step is not reached. It must not continue filling Purchase Order No., Purchase Order Date, or Contract End Date while the wizard is still on the first page.
 - Added a DOM/coordinate combobox trigger fallback for Salesforce Lightning dropdowns near visible labels. This is specifically to handle headless Cloud Run cases where role/name selectors cannot open Contract Source or Distribution Channel.
+
+Current live testing status on 2026-05-07:
+
+- Latest pushed fix: `34abda6` - `fix: fail fast when contract wizard does not advance`.
+- Latest deployed Contract Logging Agent revision: `jsw-contract-logging-agent-00021-6jn`.
+- Health check after deploy returned `OK`.
+- Existing Contract Status Agent was verified unchanged on revision `jsw-contract-status-agent-00041-22j`.
+- Current activity: live Teams testing by entering multiple O360 ticket numbers in the `Contract logging` channel.
+- The expected Teams journey for each test is: user posts O360 ticket -> outgoing webhook acknowledgement -> Jira details confirmation Adaptive Card -> user clicks Confirm -> Power Automate posts confirmed audit details -> Power Automate posts creating-contract progress message -> Cloud Run creates the contract in JSW Steel Salesforce -> Teams receives final Contract Number success card or short failure card.
+- If a run fails during Salesforce creation, Teams should show only the short failure message, while Cloud Run logs should contain field-level details showing the last successful step.
+- Important log checkpoint for the latest fix: before filling Purchase Order fields, logs should show `Contract Source` selected and the wizard should have reached the Purchase Order step. If not, the agent stops early instead of creating misleading PO/date errors.

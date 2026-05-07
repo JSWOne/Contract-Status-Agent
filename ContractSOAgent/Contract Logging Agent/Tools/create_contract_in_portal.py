@@ -230,7 +230,6 @@ def fill_contract_form(page, data: dict) -> None:
 
     screenshot(page, "04_first_page_filled")
     log_step("clicking Next on New Contract first page")
-    click_next_if_visible(page)
     ensure_second_step(page)
     page.wait_for_timeout(2_000)
 
@@ -385,6 +384,25 @@ def fill_or_select(page, label: str, value: str) -> None:
         return
 
     if label in COMBOBOX_SELECTORS:
+        # Before raising, check if the value is already displayed in the button (pre-selected default).
+        try:
+            for selector in build_button_selectors(label_patterns):
+                btn = page.locator(selector).first
+                if btn.count() > 0:
+                    btn_text = btn.inner_text(timeout=1_000)
+                    if value.strip().lower() in btn_text.strip().lower():
+                        return
+        except Exception:
+            pass
+        # Also check page body text — some fields show selected value as plain text not in button
+        try:
+            body_text = page.inner_text("body", timeout=2_000)
+            for pattern in label_patterns:
+                idx = body_text.lower().find(pattern.lower())
+                if idx != -1 and value.strip().lower() in body_text[idx:idx + 120].lower():
+                    return
+        except Exception:
+            pass
         diagnostics = collect_form_diagnostics(page, {})
         raise RuntimeError(
             f"Could not select {label} option {value}. Diagnostics: "
@@ -674,24 +692,30 @@ def fill_by_visible_label(page, label: str, value: str) -> bool:
     return False
 
 
+SECOND_STEP_INDICATORS = (
+    "Purchase Order",
+    "Pricing Date",
+    "Contract Header Details",
+    "Contract Receiving Date",
+)
+
+
 def ensure_second_step(page) -> None:
-    """Make sure the New Contract wizard has advanced to the PO/date step."""
-    for attempt in range(3):
+    """Make sure the New Contract wizard has advanced past the first page."""
+    click_next_if_visible(page)
+    # Poll up to 12 seconds for the second step to render — page transition can be slow
+    for _ in range(12):
+        page.wait_for_timeout(1_000)
         try:
-            body_text = page.inner_text("body", timeout=3_000)
-            if "Purchase Order" in body_text or "Pricing Date" in body_text:
+            body_text = page.inner_text("body", timeout=2_000)
+            if any(indicator in body_text for indicator in SECOND_STEP_INDICATORS):
                 return
         except Exception:
             pass
-        if attempt == 0:
-            click_next_if_visible(page)
-        else:
-            click_button_by_text_js(page, "Next")
-        page.wait_for_timeout(1_500)
     diagnostics = collect_form_diagnostics(page, {})
     screenshot(page, "04_second_step_not_reached")
     raise RuntimeError(
-        "New Contract wizard did not reach Purchase Order step after Next. "
+        "New Contract wizard did not reach step 2 after Next. "
         "Check first-page required fields. Diagnostics: "
         + compact_json(diagnostics, max_len=1600)
     )

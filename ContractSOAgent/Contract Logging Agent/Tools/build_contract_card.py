@@ -45,7 +45,7 @@ def build_confirmation_card(data: dict) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
-        "version": "1.2",
+        "version": "1.3",
         "body": [
             {
                 "type": "TextBlock",
@@ -74,6 +74,8 @@ def build_confirmation_card(data: dict) -> dict:
                 "label": "Distribution Channel",
                 "style": "compact",
                 "value": data.get("distribution_channel", ""),
+                "isRequired": True,
+                "errorMessage": "Please select Distribution Channel before confirming.",
                 "choices": [
                     {"title": "OEM", "value": "OEM"},
                     {"title": "MSME", "value": "MSME"},

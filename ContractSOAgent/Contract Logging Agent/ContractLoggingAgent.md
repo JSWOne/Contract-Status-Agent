@@ -368,7 +368,7 @@ Production readiness history and final rules:
 - Fix added: `/contract-confirm` now accepts common Power Automate response wrappers, posts the audit card before portal automation, and makes local memory/log writes non-blocking.
 - Production confirmation-card post then failed in Power Automate at `Post adaptive card and wait for a response` with `MissingOrInvalidBotMessageRequest`.
 - Fix added: audit/success/failure cards use Teams Flowbot-safe Adaptive Card version `1.2`.
-- Confirmation card now uses Adaptive Card version `1.3` only to support required Distribution Channel validation with `isRequired` and `errorMessage`.
+- Confirmation card uses Teams Flowbot-safe Adaptive Card version `1.2`. Do not use Adaptive Card `1.3` required-input validation in this Power Automate flow because `Post adaptive card and wait for a response` can keep running without showing a visible usable card in Teams.
 - After confirmed-details audit card, Power Automate posts the single progress message: `Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.`
 - Cloud Run no longer posts its own progress Adaptive Card, to avoid duplicate Teams messages.
 - Production log check showed `/contract-confirm` was returning HTTP 200 quickly without reliable Playwright progress logs because contract creation was launched in a daemon background thread.
@@ -396,7 +396,7 @@ Final Playwright production rules saved on 2026-05-07:
 - Sold To can auto-populate Ship To and Payer. Clear those selected pills before applying the confirmed Ship To and Payer values.
 - Division is not a lookup search field. Select the already visible Division option such as `HRC Division`; do not type `HRC` into the search bar.
 - Distribution Channel must be selected before clicking `Next`.
-- Distribution Channel is marked required in the Teams confirmation card; the user should not be able to submit Confirm until they select a value from the dropdown.
+- Distribution Channel is required, but enforcement is server-side in `/contract-confirm`. If the user confirms with a blank value, the agent posts a short Teams validation message and stops before Salesforce automation.
 - `/contract-confirm` validates Distribution Channel before audit posting or Salesforce automation. If it is blank, `-`, or the Teams bullet placeholder `•`, the agent posts a Teams validation message asking the user to fill Distribution Channel first and stops the run.
 - The Salesforce creation function also validates Distribution Channel as a second safety net, so browser launch is blocked even if a future flow calls the creation function directly.
 - After `Next`, verify the wizard advanced to the Purchase Order page. Retry `Next` if the page still shows first-step fields.

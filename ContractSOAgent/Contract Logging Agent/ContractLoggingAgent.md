@@ -251,11 +251,11 @@ Current deployed service:
 | Public URL | `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app` |
 | Health endpoint | `GET /health` returns `OK` |
 | Deployment type shown in Cloud Run | Container |
-| Latest deployed revision | `jsw-contract-logging-agent-00003-f6d` |
+| Latest deployed revision | `jsw-contract-logging-agent-00014-nq2` |
 | Image tag used | `asia-south1-docker.pkg.dev/ai-for-jswone/contract-agents/contract-logging-agent:35306cb1-9da4-4d94-a469-f3ce998abf1e` |
 | Auto-deploy trigger | `jsw-contract-logging-agent-deploy` |
 | Auto-deploy branch | `deploy-to-statusrepo` |
-| Environment variables | Configured on Cloud Run revision `jsw-contract-logging-agent-00003-f6d` |
+| Environment variables | Configured on Cloud Run service `jsw-contract-logging-agent` |
 
 Production safety note:
 
@@ -282,7 +282,7 @@ The Contract Logging Agent now covers the full Contract creation journey:
 | Post created Contract Number to Teams | Built and locally tested through CLI `--post-to-teams` |
 | Close browser after successful Contract Number extraction | Built |
 
-Local validation completed for CLI and portal creation. Remaining validation is production Teams webhook + Power Automate Confirm callback against Cloud Run.
+Local validation completed for CLI and portal creation. Production Teams webhook + Power Automate Confirm callback validation is now complete.
 
 ---
 
@@ -360,10 +360,10 @@ Cloud Run deployment progress on 2026-05-06:
 - Deleted temporary env-vars file from `C:\tmp`.
 - Verified `GET /health` returns `OK` after env var update.
 
-Pending for production readiness:
+Production readiness history and final rules:
 
-- Update Teams outgoing webhook callback URL to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-webhook`.
-- Update Power Automate Confirm callback URL to `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-confirm`.
+- Teams outgoing webhook callback URL is `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-webhook`.
+- Power Automate Confirm callback URL is `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/contract-confirm`.
 - First production Teams confirm test reached Teams response acknowledgement, but the channel audit card did not appear.
 - Fix added: `/contract-confirm` now accepts common Power Automate response wrappers, posts the audit card before portal automation, and makes local memory/log writes non-blocking.
 - Production confirmation-card post then failed in Power Automate at `Post adaptive card and wait for a response` with `MissingOrInvalidBotMessageRequest`.
@@ -380,6 +380,26 @@ Pending for production readiness:
 - Cloud Run logs now show detailed field-by-field progress: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, PO Number, PO Date, Contract Start Date, Contract End Date, and Save.
 - Cloud Run browser now uses a fixed 1920x1080 viewport because headless Salesforce rendering can differ from the local visible browser and hide/change the New Contract modal/footer behavior.
 - Confirmation/adaptive-card posting to Teams now retries Power Automate calls up to 4 times with backoff and `Connection: close`, because Cloud Run saw a transient `urllib3.exceptions.SSLError: EOF occurred in violation of protocol` while posting the card.
-- Run one production Teams test: Teams ticket message -> confirmation card -> Confirm -> portal create/save -> Teams success card.
+- Production Teams test completed successfully: Teams ticket message -> confirmation card -> Confirm -> JSW Steel Salesforce portal create/save -> generated Contract Number -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.
+
+Final Playwright production rules saved on 2026-05-07:
+
+- Keep Contract Status Agent and Contract Logging Agent independent. Do not change the status agent service, root Dockerfile, or root entrypoint for logging-agent work.
+- `/contract-confirm` must run JSW Steel Salesforce contract creation synchronously, not in a daemon background thread, so Cloud Run keeps CPU active and logs the full Playwright journey.
+- Use fixed Chromium viewport `1920x1080` in Cloud Run because Salesforce Lightning rendered differently in headless mode with smaller/default sizing.
+- Before filling, verify the New Contract wizard is really open by checking for `New Contract`, `Contract Type`, and `Sold To Party`.
+- Sold To can auto-populate Ship To and Payer. Clear those selected pills before applying the confirmed Ship To and Payer values.
+- Division is not a lookup search field. Select the already visible Division option such as `HRC Division`; do not type `HRC` into the search bar.
+- Distribution Channel must be selected before clicking `Next`.
+- `/contract-confirm` validates Distribution Channel before audit posting or Salesforce automation. If it is blank, `-`, or the Teams bullet placeholder `•`, the agent posts a Teams validation message asking the user to fill Distribution Channel first and stops the run.
+- After `Next`, verify the wizard advanced to the Purchase Order page. Retry `Next` if the page still shows first-step fields.
+- PO Date and Contract End Date must be filled in portal format `DD-MMM-YYYY`, for example `24-Apr-2026`.
+- Contract Start Date must always be today's date because the portal rejects past start dates.
+- Save handling must support both normal button selectors and the JavaScript fallback because the Save footer can be hard to locate in headless Salesforce.
+- After Save, accept `/jswone/s/detail/<recordId>` URLs as successful contract detail navigation and extract the generated Contract Number from the page.
+- Close the browser after successful Contract Number extraction.
+- Teams should show only short human-readable status/failure cards. Detailed field-by-field diagnostics belong in Cloud Run logs.
+- Cloud Run logs must keep field progress messages: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, PO Number, PO Date, Contract Start Date, Contract End Date, and Save.
+- Teams/Power Automate posting must keep retry/backoff with `Connection: close` because production saw a transient `urllib3.exceptions.SSLError: EOF occurred in violation of protocol`.

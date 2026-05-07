@@ -188,6 +188,25 @@ def build_contract_creation_failed_card(ticket_id: str, error_message: str) -> d
     }
 
 
+def build_contract_validation_failed_card(ticket_id: str, missing_fields: list[str]) -> dict:
+    fields = ", ".join(missing_fields)
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Please fill {fields} before confirming {ticket_id}.",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Attention",
+                "wrap": True,
+            }
+        ],
+    }
+
+
 def build_contract_creation_started_card(ticket_id: str) -> dict:
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",

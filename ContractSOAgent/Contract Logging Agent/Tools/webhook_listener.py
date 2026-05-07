@@ -19,6 +19,7 @@ from flask import Flask, jsonify, request
 from build_contract_card import (
     build_audit_card,
     build_contract_creation_failed_card,
+    build_contract_validation_failed_card,
     build_contract_created_card,
     build_confirmation_card,
     build_navigation_success_card,
@@ -83,6 +84,18 @@ def contract_confirm():
         return jsonify({"status": "error", "detail": "missing ticket_id"}), 400
 
     app.logger.info("Contract confirm received for %s", ticket_id)
+    missing_fields = validate_confirmed_contract_details(data)
+    if missing_fields:
+        app.logger.info("Contract confirm rejected for %s; missing fields: %s", ticket_id, ", ".join(missing_fields))
+        post_card(build_contract_validation_failed_card(ticket_id, missing_fields))
+        safe_write_memory_step(
+            "contract_confirm_validation",
+            "failed",
+            f"Rejected confirmation for {ticket_id}; missing required fields: {', '.join(missing_fields)}",
+            {"ticket_id": ticket_id, "missing_fields": missing_fields, "input": data},
+        )
+        return jsonify({"status": "validation_error", "ticket_id": ticket_id, "missing_fields": missing_fields}), 400
+
     post_card(build_audit_card(data))
     safe_write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
     result = create_contract_after_confirm(ticket_id, data)
@@ -211,6 +224,22 @@ def normalise_confirm_payload(payload: dict) -> dict:
         if isinstance(candidate, dict) and candidate.get("ticket_id"):
             return candidate
     return payload
+
+
+def validate_confirmed_contract_details(data: dict) -> list[str]:
+    missing = []
+    required_fields = [("Distribution Channel", "distribution_channel")]
+    for label, key in required_fields:
+        if is_blank_card_value(data.get(key)):
+            missing.append(label)
+    return missing
+
+
+def is_blank_card_value(value) -> bool:
+    if value is None:
+        return True
+    text = str(value).strip()
+    return text in {"", "-", "•", "null", "None"}
 
 
 def handle_error(step: str, code: str, message: str, payload: dict) -> None:

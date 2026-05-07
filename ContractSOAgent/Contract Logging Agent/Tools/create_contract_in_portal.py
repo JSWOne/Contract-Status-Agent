@@ -288,7 +288,12 @@ def run_fill_step(page, label: str, value: str, action) -> None:
     log_step(f"filling {label} with {expected or '-'}")
     action()
     observed = read_value_by_nearby_text_js(page, label_variants(label))
-    if expected and not observed and fill_by_nearby_text_js(page, label_variants(label), expected):
+    if (
+        expected
+        and not observed
+        and label not in COMBOBOX_SELECTORS
+        and fill_by_nearby_text_js(page, label_variants(label), expected)
+    ):
         observed = read_value_by_nearby_text_js(page, label_variants(label))
     log_step(f"filled {label}; observed={observed or '<blank>'}")
 
@@ -352,8 +357,9 @@ def fill_or_select(page, label: str, value: str) -> None:
                 button.scroll_into_view_if_needed()
                 button.click(timeout=3_000)
                 page.wait_for_timeout(800)
-                click_option(page, value)
-                return
+                if click_option(page, value):
+                    return
+                page.keyboard.press("Escape")
         except Exception:
             pass
 
@@ -369,10 +375,21 @@ def fill_or_select(page, label: str, value: str) -> None:
                     "xpath=../..//*[@role='combobox']"
                 ).first.click(timeout=3_000)
                 page.wait_for_timeout(800)
-                click_option(page, value)
-                return
+                if click_option(page, value):
+                    return
+                page.keyboard.press("Escape")
     except Exception:
         pass
+
+    if click_combobox_near_label_js(page, label_patterns, value):
+        return
+
+    if label in COMBOBOX_SELECTORS:
+        diagnostics = collect_form_diagnostics(page, {})
+        raise RuntimeError(
+            f"Could not select {label} option {value}. Diagnostics: "
+            + compact_json(diagnostics, max_len=1400)
+        )
 
     fill_input(page, label, value)
 
@@ -671,7 +688,73 @@ def ensure_second_step(page) -> None:
         else:
             click_button_by_text_js(page, "Next")
         page.wait_for_timeout(1_500)
-    log.warning("Could not verify second New Contract wizard step after Next")
+    diagnostics = collect_form_diagnostics(page, {})
+    screenshot(page, "04_second_step_not_reached")
+    raise RuntimeError(
+        "New Contract wizard did not reach Purchase Order step after Next. "
+        "Check first-page required fields. Diagnostics: "
+        + compact_json(diagnostics, max_len=1600)
+    )
+
+
+def click_combobox_near_label_js(page, labels: list[str], value: str) -> bool:
+    """Click a Salesforce combobox trigger nearest to the field label, then choose an option."""
+    clicked = bool(
+        page.evaluate(
+            """
+            (labels) => {
+                const clean = (text) => (text || '').replace(/\\*/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const targetLabels = labels.map(clean).filter(Boolean);
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+                };
+                const labelNodes = Array.from(document.querySelectorAll('label, span, div'))
+                    .filter(visible)
+                    .filter(el => {
+                        const text = clean(el.textContent);
+                        return targetLabels.some(target => {
+                            if (text === target) return true;
+                            if (!['LABEL', 'SPAN'].includes(el.tagName)) return false;
+                            return text.includes(target) && text.length <= target.length + 14;
+                        });
+                    });
+                const controls = Array.from(document.querySelectorAll('button, [role="combobox"]'))
+                    .filter(el => !el.disabled && visible(el));
+                for (const label of labelNodes) {
+                    const lr = label.getBoundingClientRect();
+                    const candidates = controls
+                        .map(control => {
+                            const cr = control.getBoundingClientRect();
+                            const rowPenalty = Math.abs((cr.top + cr.bottom) / 2 - (lr.top + lr.bottom) / 2);
+                            const rightPenalty = cr.left >= lr.left - 40 ? 0 : 5000;
+                            const belowPenalty = cr.top >= lr.top - 20 ? 0 : 2500;
+                            const horizontalPenalty = Math.abs(cr.left - lr.left);
+                            const distance = rowPenalty * 10 + horizontalPenalty + rightPenalty + belowPenalty;
+                            return {control, distance};
+                        })
+                        .sort((a, b) => a.distance - b.distance);
+                    if (candidates.length && candidates[0].distance < 4200) {
+                        candidates[0].control.scrollIntoView({block: 'center', inline: 'nearest'});
+                        candidates[0].control.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+            """,
+            labels,
+        )
+    )
+    if not clicked:
+        return False
+    page.wait_for_timeout(800)
+    if click_option(page, value):
+        log.info("Selected combobox near label %s", labels[0])
+        return True
+    page.keyboard.press("Escape")
+    return False
 
 
 def fill_by_nearby_text_js(page, labels: list[str], value: str) -> bool:

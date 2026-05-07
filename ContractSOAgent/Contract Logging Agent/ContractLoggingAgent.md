@@ -174,7 +174,7 @@ This tool is now wired into:
 Current save behavior:
 
 - The script fills the form and clicks **Save** automatically.
-- Contract Start Date is always set to today's date because the portal rejects past dates.
+- Contract Start Date is left as the Salesforce portal default. Do not fill it from automation.
 - Purchase Order Date is converted to Salesforce portal format such as `24-Apr-2026`.
 - After Save, the script waits for the generated Contract detail page, extracts the Contract Number, closes the browser, and returns the result to Teams / CLI.
 
@@ -332,7 +332,7 @@ Current New Contract automation learnings:
 - Division must be selected from the already visible list option, for example `HRC Division`; do not type/search `HRC` like a lookup.
 - Distribution Channel is required before pressing `Next`; local tests can pass it with `--distribution-channel OEM`.
 - Purchase Order Date must be entered in Salesforce portal format such as `24-Apr-2026`, not the Jira/card format `24/04/2026`.
-- Contract Start Date must always be today's date because the portal rejects past start dates.
+- Contract Start Date should be left as the Salesforce portal default; the automation should not overwrite it.
 - After filling the New Contract form, automation clicks `Save`, waits for the generated contract page, extracts the Contract Number, and posts a Teams success card saying the SO Contract was created successfully on JSW Steel Community SF portal.
 
 Cloud Run deployment progress on 2026-05-06:
@@ -378,7 +378,7 @@ Production readiness history and final rules:
 - Fix added: after clicking `Next`, automation verifies the wizard advanced to the Purchase Order step, retries `Next` if needed, fills PO/date fields by walking from visible label text to the nearby input, and uses a JS Save-button fallback.
 - If JSW Steel Salesforce contract creation fails, Cloud Run posts a Teams failure Adaptive Card: `Sorry, Not able to create new contract for <ticket> due to this error.` with the captured error reason.
 - Teams failure card is intentionally short: `Sorry, Not able to create new contract for <ticket> due to this error.` with a status note to check Cloud Run logs.
-- Cloud Run logs now show detailed field-by-field progress: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, PO Number, PO Date, Contract Start Date, Contract End Date, and Save.
+- Cloud Run logs now show detailed field-by-field progress: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, Purchase Order No., Purchase Order Date, Contract End Date, and Save.
 - Cloud Run browser now uses a fixed 1920x1080 viewport because headless Salesforce rendering can differ from the local visible browser and hide/change the New Contract modal/footer behavior.
 - Confirmation/adaptive-card posting to Teams now retries Power Automate calls up to 4 times with backoff and `Connection: close`, because Cloud Run saw a transient `urllib3.exceptions.SSLError: EOF occurred in violation of protocol` while posting the card.
 - Production Teams test completed successfully: Teams ticket message -> confirmation card -> Confirm -> JSW Steel Salesforce portal create/save -> generated Contract Number -> Teams success card.
@@ -399,10 +399,12 @@ Final Playwright production rules saved on 2026-05-07:
 - The Salesforce creation function also validates Distribution Channel as a second safety net, so browser launch is blocked even if a future flow calls the creation function directly.
 - After `Next`, verify the wizard advanced to the Purchase Order page. Retry `Next` if the page still shows first-step fields.
 - PO Date and Contract End Date must be filled in portal format `DD-MMM-YYYY`, for example `24-Apr-2026`.
-- Contract Start Date must always be today's date because the portal rejects past start dates.
+- Contract Start Date should be left as the portal default. Do not fill it from automation; only fill Purchase Order No., Purchase Order Date, and Contract End Date on the second page.
+- For second-page fields, use the exact portal labels `Purchase Order No.`, `Purchase Order Date`, and `Contract End Date`. Earlier logs showed `observed=<blank>` because the diagnostic reader used weak label variants and container walking even when the portal screen actually displayed the filled values.
 - Save handling must support both normal button selectors and the JavaScript fallback because the Save footer can be hard to locate in headless Salesforce.
 - After Save, accept `/jswone/s/detail/<recordId>` URLs as successful contract detail navigation and extract the generated Contract Number from the page.
 - Close the browser after successful Contract Number extraction.
 - Teams should show only short human-readable status/failure cards. Detailed field-by-field diagnostics belong in Cloud Run logs.
-- Cloud Run logs must keep field progress messages: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, PO Number, PO Date, Contract Start Date, Contract End Date, and Save.
+- Cloud Run logs must keep field progress messages: filling/filled Contract Type, Sold To, Ship To, Payer, Division, Distribution Channel, Contract Source, Purchase Order No., Purchase Order Date, Contract End Date, and Save.
+- The second-page helper now retries fill/read using the nearest visible control beside short exact labels only. Avoid broad ancestor/container walking because it caused misleading `observed=<blank>` diagnostics even when Salesforce displayed the field values.
 - Teams/Power Automate posting must keep retry/backoff with `Connection: close` because production saw a transient `urllib3.exceptions.SSLError: EOF occurred in violation of protocol`.

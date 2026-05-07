@@ -236,11 +236,9 @@ def fill_contract_form(page, data: dict) -> None:
 
     dump_html(page, "04_after_first_next")
     screenshot(page, "04_after_first_next")
-    run_fill_step(page, "PO Number", data.get("po_number", ""), lambda: fill_input(page, "PO Number", data.get("po_number", "")))
+    run_fill_step(page, "Purchase Order No.", data.get("po_number", ""), lambda: fill_input(page, "Purchase Order No.", data.get("po_number", "")))
     page.wait_for_timeout(500)
-    run_fill_step(page, "PO Date", data.get("po_date", ""), lambda: fill_date(page, "PO Date", data.get("po_date", "")))
-    page.wait_for_timeout(500)
-    run_fill_step(page, "Contract Start Date", today_date(), lambda: fill_date(page, "Contract Start Date", today_date()))
+    run_fill_step(page, "Purchase Order Date", data.get("po_date", ""), lambda: fill_date(page, "Purchase Order Date", data.get("po_date", "")))
     page.wait_for_timeout(500)
     run_fill_step(page, "Contract End Date", data.get("contract_end_date", ""), lambda: fill_date(page, "Contract End Date", data.get("contract_end_date", "")))
     page.wait_for_timeout(500)
@@ -290,6 +288,8 @@ def run_fill_step(page, label: str, value: str, action) -> None:
     log_step(f"filling {label} with {expected or '-'}")
     action()
     observed = read_value_by_nearby_text_js(page, label_variants(label))
+    if expected and not observed and fill_by_nearby_text_js(page, label_variants(label), expected):
+        observed = read_value_by_nearby_text_js(page, label_variants(label))
     log_step(f"filled {label}; observed={observed or '<blank>'}")
 
 
@@ -455,6 +455,7 @@ def fill_portal_date_direct(page, label: str, value: str) -> bool:
     formatted = format_portal_date(value)
     role_names = {
         "PO Date": ["Purchase Order Date", "PO Date"],
+        "Purchase Order Date": ["Purchase Order Date", "PO Date"],
         "Contract Start Date": ["Contract Start Date"],
         "Contract End Date": ["Contract End Date"],
     }
@@ -571,6 +572,7 @@ def select_division_option(page, value: str) -> bool:
 def fill_input_by_role(page, label: str, value: str) -> bool:
     role_names = {
         "PO Number": ["Purchase Order No.", "PO Number"],
+        "Purchase Order No.": ["Purchase Order No.", "PO Number"],
     }
     for role_name in role_names.get(label, [label]):
         try:
@@ -589,6 +591,7 @@ def fill_input_by_role(page, label: str, value: str) -> bool:
 def fill_date_by_picker(page, label: str, value: str) -> bool:
     role_names = {
         "PO Date": ["Purchase Order Date", "PO Date"],
+        "Purchase Order Date": ["Purchase Order Date", "PO Date"],
         "Contract Start Date": ["Contract Start Date"],
         "Contract End Date": ["Contract End Date"],
     }
@@ -682,7 +685,7 @@ def fill_by_nearby_text_js(page, labels: list[str], value: str) -> bool:
                 const visible = (el) => {
                     const style = window.getComputedStyle(el);
                     const rect = el.getBoundingClientRect();
-                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width >= 0 && rect.height >= 0;
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
                 };
                 const setValue = (input) => {
                     input.scrollIntoView({block: 'center', inline: 'nearest'});
@@ -696,25 +699,33 @@ def fill_by_nearby_text_js(page, labels: list[str], value: str) -> bool:
                     input.dispatchEvent(new Event('blur', {bubbles: true}));
                     return true;
                 };
-                const all = Array.from(document.querySelectorAll('label, span, div, lightning-formatted-text'));
-                for (const label of all) {
-                    const text = clean(label.textContent);
-                    if (!targetLabels.some(target => text.includes(target))) continue;
-                    let root = label;
-                    for (let depth = 0; depth < 8 && root; depth += 1, root = root.parentElement) {
-                        const inputs = Array.from(root.querySelectorAll('input:not([type="hidden"]), textarea'))
-                            .filter(input => !input.disabled && !input.readOnly && visible(input));
-                        if (inputs.length) return setValue(inputs[0]);
-                    }
-                    const xpath = document.evaluate(
-                        './/following::input[not(@type="hidden")][1] | .//following::textarea[1]',
-                        label,
-                        null,
-                        XPathResult.FIRST_ORDERED_NODE_TYPE,
-                        null
-                    );
-                    if (xpath.singleNodeValue && !xpath.singleNodeValue.disabled && visible(xpath.singleNodeValue)) {
-                        return setValue(xpath.singleNodeValue);
+                const labelsOnPage = Array.from(document.querySelectorAll('label, span, div'))
+                    .filter(visible)
+                    .filter(el => {
+                        const text = clean(el.textContent);
+                        return targetLabels.some(target => {
+                            if (text === target) return true;
+                            if (!['LABEL', 'SPAN'].includes(el.tagName)) return false;
+                            return text.includes(target) && text.length <= target.length + 12;
+                        });
+                    });
+                const controls = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea'))
+                    .filter(input => !input.disabled && !input.readOnly && visible(input));
+                for (const label of labelsOnPage) {
+                    const lr = label.getBoundingClientRect();
+                    const candidates = controls
+                        .map(input => {
+                            const ir = input.getBoundingClientRect();
+                            const rowPenalty = Math.abs((ir.top + ir.bottom) / 2 - (lr.top + lr.bottom) / 2);
+                            const rightPenalty = ir.left >= lr.left - 20 ? 0 : 5000;
+                            const belowPenalty = ir.top >= lr.top - 12 ? 0 : 2500;
+                            const horizontalPenalty = Math.abs(ir.left - lr.left);
+                            const distance = rowPenalty * 10 + horizontalPenalty + rightPenalty + belowPenalty;
+                            return {input, distance};
+                        })
+                        .sort((a, b) => a.distance - b.distance);
+                    if (candidates.length && candidates[0].distance < 3500) {
+                        return setValue(candidates[0].input);
                     }
                 }
                 return false;
@@ -783,7 +794,7 @@ def collect_form_diagnostics(page, expected: dict) -> dict:
             "contract_source": expected.get("contract_source"),
             "po_number": expected.get("po_number"),
             "po_date": format_portal_date(expected.get("po_date", "")),
-            "contract_start_date": format_portal_date(today_date()),
+            "contract_start_date": None,
             "contract_end_date": format_portal_date(expected.get("contract_end_date", "")),
         },
         "observed": observed,
@@ -803,7 +814,7 @@ def read_value_by_nearby_text_js(page, labels: list[str]) -> str:
                     const visible = (el) => {
                         const style = window.getComputedStyle(el);
                         const rect = el.getBoundingClientRect();
-                        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width >= 0 && rect.height >= 0;
+                        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
                     };
                     const valueOf = (el) => {
                         if (!el) return '';
@@ -811,18 +822,35 @@ def read_value_by_nearby_text_js(page, labels: list[str]) -> str:
                         const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
                         return text;
                     };
-                    const all = Array.from(document.querySelectorAll('label, span, div, lightning-formatted-text'));
-                    for (const label of all) {
-                        const text = clean(label.textContent);
-                        if (!targetLabels.some(target => text.includes(target))) continue;
-                        let root = label;
-                        for (let depth = 0; depth < 8 && root; depth += 1, root = root.parentElement) {
-                            const controls = Array.from(root.querySelectorAll('input:not([type="hidden"]), textarea, select, lightning-base-combobox-formatted-text, lightning-formatted-text'))
-                                .filter(visible);
-                            for (const control of controls) {
-                                const value = valueOf(control);
-                                if (value && !targetLabels.some(target => clean(value).includes(target))) return value;
-                            }
+                    const labelsOnPage = Array.from(document.querySelectorAll('label, span, div'))
+                        .filter(visible)
+                        .filter(el => {
+                            const text = clean(el.textContent);
+                            return targetLabels.some(target => {
+                                if (text === target) return true;
+                                if (!['LABEL', 'SPAN'].includes(el.tagName)) return false;
+                                return text.includes(target) && text.length <= target.length + 12;
+                            });
+                        });
+                    const controls = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, select, lightning-base-combobox-formatted-text'))
+                        .filter(visible);
+                    for (const label of labelsOnPage) {
+                        const lr = label.getBoundingClientRect();
+                        const candidates = controls
+                            .map(control => {
+                                const ir = control.getBoundingClientRect();
+                                const rowPenalty = Math.abs((ir.top + ir.bottom) / 2 - (lr.top + lr.bottom) / 2);
+                                const rightPenalty = ir.left >= lr.left - 20 ? 0 : 5000;
+                                const belowPenalty = ir.top >= lr.top - 12 ? 0 : 2500;
+                                const horizontalPenalty = Math.abs(ir.left - lr.left);
+                                const distance = rowPenalty * 10 + horizontalPenalty + rightPenalty + belowPenalty;
+                                return {control, distance};
+                            })
+                            .sort((a, b) => a.distance - b.distance);
+                        for (const candidate of candidates.slice(0, 3)) {
+                            if (candidate.distance >= 3500) continue;
+                            const value = valueOf(candidate.control);
+                            if (value && !targetLabels.some(target => clean(value).includes(target))) return value;
                         }
                     }
                     return '';
@@ -1138,7 +1166,9 @@ def label_variants(label: str) -> list[str]:
         "Contract Source": ["Contract Source"],
         "Distribution Channel": ["Distribution Channel"],
         "PO Number": ["PO Number", "Purchase Order No."],
-        "PO Date": ["PO Date", "PO Date (DD/MM/YYYY)"],
+        "Purchase Order No.": ["Purchase Order No.", "PO Number"],
+        "PO Date": ["PO Date", "Purchase Order Date", "PO Date (DD/MM/YYYY)"],
+        "Purchase Order Date": ["Purchase Order Date", "PO Date"],
         "Contract Start Date": ["Contract Start Date"],
         "Contract End Date": ["Contract End Date", "Contract End Date (DD/MM/YYYY)"],
     }

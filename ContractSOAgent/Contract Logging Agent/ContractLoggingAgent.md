@@ -1,6 +1,6 @@
 # ContractLoggingAgent - Skill Instructions
 > **Parent Orchestrator:** ContractSOAgent  
-> Version: 1.5.0 | Phase: 2 | Status: Cloud Run env vars configured; production Teams callback pending | Last Updated: 2026-05-06
+> Version: 2.0.0 | Phase: 2 | Status: FULLY DEPLOYED ON GCP — Teams end-to-end tested, GCS error memory active | Last Updated: 2026-05-07
 
 ---
 
@@ -424,3 +424,121 @@ Current live testing status on 2026-05-07:
 - The expected Teams journey for each test is: user posts O360 ticket -> outgoing webhook acknowledgement -> Jira details confirmation Adaptive Card -> user clicks Confirm -> Power Automate posts confirmed audit details -> Power Automate posts creating-contract progress message -> Cloud Run creates the contract in JSW Steel Salesforce -> Teams receives final Contract Number success card or short failure card.
 - If a run fails during Salesforce creation, Teams should show only the short failure message, while Cloud Run logs should contain field-level details showing the last successful step.
 - Important log checkpoint for the latest fix: before filling Purchase Order fields, logs should show `Contract Source` selected and the wizard should have reached the Purchase Order step. If not, the agent stops early instead of creating misleading PO/date errors.
+
+---
+
+## 15. Session 2026-05-07 — End-to-End Test Results and Bug Fixes
+
+### Teams Test Results
+
+| Ticket | Contract Type | Distribution Channel | Result | Contract Number |
+|--------|--------------|----------------------|--------|----------------|
+| O360-15705 | ZCQD | OEM | **Success** | `00174683` |
+| O360-15707 | ZCQT | OEM | **Failed** | N/A — see bug below |
+
+### Root Cause: ZCQT Wizard Navigation Failure
+
+O360-15707 is contract type **ZCQT (JSW Dom Contract)**. After clicking Next on page 1, the Salesforce portal performs a slower server-side validation for ZCQT than for ZCQD. The previous `ensure_second_step` waited only 12 seconds and checked only text-based indicators — it never detected ZCQT's second step because:
+
+1. The 12-second timeout was too short for ZCQT server validation.
+2. The first Next click may not register if the portal is still processing.
+3. The URL-change signal (most reliable detection method) was not being used.
+
+### Fixes Applied (commit `da88df8`)
+
+**`create_contract_in_portal.py` — `ensure_second_step`:**
+- Added URL-change detection: if `page.url` changes from `jsw-one-new`, navigation is confirmed regardless of body text.
+- Added `_STEP1_MARKER` check: if `Contract Type` disappears from body, page has moved past step 1.
+- Retry Next click at 5 seconds and 10 seconds if page has not yet moved — handles ZCQT slow server validation.
+- Total timeout extended to 20 seconds.
+
+**`webhook_listener.py` — GCS-backed error memory:**
+- Fixed `LOG_PATH` — previously wrote to `/app/Logs/error.log` (read-only in Cloud Run). Now uses `/tmp/error.log` when `GCS_MEMORY_BUCKET` is set.
+- Added `GCS_MEMORY_BUCKET` env var (`ai-for-jswone-contract-agent-state`) to the `jsw-contract-logging-agent` Cloud Run service.
+- Added `GCS_ERROR_LOG_BLOB = contract-logging-agent/error_memory.json` in the shared GCS bucket.
+- `record_contract_error()` appends every failed creation with: timestamp, ticket, contract_type, distribution_channel, division, error_message.
+- `record_contract_success()` appends every successful creation and marks prior errors for the same ticket as resolved.
+- Last 200 errors and 200 successes are retained; old entries are trimmed automatically.
+
+### Cloud Build Trigger Fix
+
+Discovered that the logging agent Cloud Build trigger watches the `Contract-Status-Agent` GitHub repo (`statusrepo` remote), not the `Contract-SO-AI-Agent` repo (`origin` remote). The two remotes are:
+
+| Remote | GitHub Repo | Purpose |
+|--------|-------------|---------|
+| `origin` | `JSWOne/Contract-SO-AI-Agent` | Local working copy / backup |
+| `statusrepo` | `JSWOne/Contract-Status-Agent` | Source watched by Cloud Build triggers |
+
+**Rule going forward: always push to `statusrepo/main` to trigger Cloud Build deployments.**
+
+The logging agent files were also missing from `statusrepo/main` (they had only existed on `deploy-to-statusrepo` branch). Both files are now committed to `statusrepo/main` so Cloud Build `includedFiles` matching works correctly.
+
+### Deployment After Fix
+
+| Item | Value |
+|------|-------|
+| Build triggered | `f2225c2b` — `jsw-contract-logging-agent-deploy` |
+| Target service | `jsw-contract-logging-agent` |
+| Contract Status Agent | **Unchanged** — `jsw-contract-status-agent-00041-22j` |
+
+---
+
+## 16. Self-Learning Agent Vision
+
+The goal is for the Contract Logging Agent to learn from its own failures over time, so it does not repeat the same errors across different ticket runs.
+
+### What "learning" means here
+
+When the agent fails to create a contract, the failure is recorded in a persistent GCS file with full context: ticket ID, contract type, distribution channel, error step, and error message. When the same contract type or combination causes a similar failure again, that pattern becomes visible across runs.
+
+The learning loop is:
+
+```
+Run → Fail → Record error to GCS error_memory.json
+             (timestamp, ticket, contract_type, distribution_channel, error, resolved: false)
+             ↓
+Run → Succeed (same ticket or same type) → Mark prior error as resolved: true
+             ↓
+Over time: error_memory.json contains a history of which contract types / channels
+           cause issues, which ones succeed, and whether a fix resolved the pattern.
+```
+
+### Planned next steps for self-learning
+
+1. **Read past errors before attempting creation** — Before starting the Salesforce wizard for a ticket, the agent reads `error_memory.json` and checks if the same contract type + distribution channel has unresolved prior failures. It can log a warning or adjust its retry strategy.
+
+2. **Error classification** — Categorise errors into known classes (e.g. `wizard_navigation_timeout`, `combobox_not_found`, `save_failed`) so the agent can distinguish retry-able from configuration errors.
+
+3. **Automatic resolution notes** — When a code fix resolves a previously recorded error pattern, the fix commit message should reference the error class so the GCS log can be annotated with the resolution.
+
+4. **Admin summary card** — Periodically post a Teams card showing: how many contracts succeeded vs failed this week, which contract types are unreliable, and any unresolved error patterns still open.
+
+5. **GCS error log location** — `gs://ai-for-jswone-contract-agent-state/contract-logging-agent/error_memory.json`
+
+### Current GCS error memory format
+
+```json
+{
+  "errors": [
+    {
+      "timestamp": "2026-05-07T13:16:45Z",
+      "ticket_id": "O360-15707",
+      "contract_type": "ZCQT",
+      "distribution_channel": "OEM",
+      "division": "GL",
+      "error_message": "New Contract wizard did not reach step 2 after Next...",
+      "resolved": false
+    }
+  ],
+  "successes": [
+    {
+      "timestamp": "2026-05-07T13:44:00Z",
+      "ticket_id": "O360-15705",
+      "contract_type": "ZCQD",
+      "distribution_channel": "OEM",
+      "division": "GL",
+      "contract_number": "00174683"
+    }
+  ]
+}
+```

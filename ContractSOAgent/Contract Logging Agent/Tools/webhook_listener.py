@@ -99,7 +99,12 @@ def contract_confirm():
     post_card(build_audit_card(data))
     safe_write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
     result = create_contract_after_confirm(ticket_id, data)
-    status_code = 200 if result.get("status") == "success" else 500
+    if result.get("status") == "success":
+        status_code = 200
+    elif result.get("status") == "validation_error":
+        status_code = 400
+    else:
+        status_code = 500
     return jsonify(result), status_code
 
 
@@ -151,6 +156,21 @@ def navigate_after_confirm(ticket_id: str) -> None:
 
 
 def create_contract_after_confirm(ticket_id: str, data: dict) -> dict:
+    missing_fields = validate_confirmed_contract_details(data)
+    if missing_fields:
+        app.logger.info("Contract creation blocked for %s; missing fields: %s", ticket_id, ", ".join(missing_fields))
+        try:
+            post_card(build_contract_validation_failed_card(ticket_id, missing_fields))
+        except Exception as notify_exc:
+            app.logger.exception("Could not post contract validation card: %s", notify_exc)
+        safe_write_memory_step(
+            "create_contract_validation",
+            "failed",
+            f"Blocked contract creation for {ticket_id}; missing required fields: {', '.join(missing_fields)}",
+            {"ticket_id": ticket_id, "missing_fields": missing_fields, "input": data},
+        )
+        return {"status": "validation_error", "ticket_id": ticket_id, "missing_fields": missing_fields}
+
     try:
         app.logger.info("Starting JSW Steel Salesforce contract creation for %s", ticket_id)
         contract_number = create_contract_in_portal(data, ticket_id)

@@ -269,9 +269,16 @@ def validate_contract_data(data: dict) -> None:
         "po_date": "PO Date",
         "contract_end_date": "Contract End Date",
     }
-    missing = [label for key, label in required.items() if not str(data.get(key, "")).strip()]
+    missing = [label for key, label in required.items() if is_blank_required_value(data.get(key))]
     if missing:
         raise RuntimeError("Missing required contract field(s): " + ", ".join(missing))
+
+
+def is_blank_required_value(value) -> bool:
+    if value is None:
+        return True
+    text = str(value).strip()
+    return text in {"", "-", "•", "null", "None"}
 
 
 def log_step(message: str) -> None:

@@ -394,6 +394,7 @@ Final Playwright production rules saved on 2026-05-07:
 - Division is not a lookup search field. Select the already visible Division option such as `HRC Division`; do not type `HRC` into the search bar.
 - Distribution Channel must be selected before clicking `Next`.
 - `/contract-confirm` validates Distribution Channel before audit posting or Salesforce automation. If it is blank, `-`, or the Teams bullet placeholder `•`, the agent posts a Teams validation message asking the user to fill Distribution Channel first and stops the run.
+- The Salesforce creation function also validates Distribution Channel as a second safety net, so browser launch is blocked even if a future flow calls the creation function directly.
 - After `Next`, verify the wizard advanced to the Purchase Order page. Retry `Next` if the page still shows first-step fields.
 - PO Date and Contract End Date must be filled in portal format `DD-MMM-YYYY`, for example `24-Apr-2026`.
 - Contract Start Date must always be today's date because the portal rejects past start dates.

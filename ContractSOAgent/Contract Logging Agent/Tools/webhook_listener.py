@@ -9,7 +9,6 @@ import hmac
 import json
 import os
 import re
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,7 +63,11 @@ def contract_webhook():
         return jsonify({"type": "message", "text": "Please send a Jira ticket like O360-15342."})
 
     ticket_id = match.group(1).upper()
-    threading.Thread(target=process_ticket, args=(ticket_id,), daemon=True).start()
+    result = process_ticket(ticket_id)
+    if result.get("status") == "not_found":
+        return jsonify({"type": "message", "text": f"Ticket {ticket_id} was not found in Jira."})
+    if result.get("status") == "error":
+        return jsonify({"type": "message", "text": f"Could not prepare confirmation card for {ticket_id}. Please check logs."})
     return jsonify(
         {
             "type": "message",
@@ -108,13 +111,13 @@ def contract_confirm():
     return jsonify(result), status_code
 
 
-def process_ticket(ticket_id: str) -> None:
+def process_ticket(ticket_id: str) -> dict:
     try:
         ticket = fetch_jira_ticket(ticket_id)
         if ticket is None:
             post_text(f"Ticket {ticket_id} was not found in Jira.")
             safe_write_memory_step("fetch_jira_ticket", "failed", "Ticket not found", {"ticket_id": ticket_id})
-            return
+            return {"status": "not_found", "ticket_id": ticket_id}
 
         details = prepare_contract_details(ticket)
         card = build_confirmation_card(details)
@@ -125,6 +128,7 @@ def process_ticket(ticket_id: str) -> None:
             f"Posted confirmation card for {ticket_id}",
             {"ticket_id": ticket_id, "details": details},
         )
+        return {"status": "success", "ticket_id": ticket_id}
 
     except (JiraAuthError, JiraConnectionError) as exc:
         handle_error("process_ticket", "JIRA_ERROR", str(exc), {"ticket_id": ticket_id})
@@ -132,12 +136,14 @@ def process_ticket(ticket_id: str) -> None:
             post_text(f"Could not fetch Jira ticket {ticket_id}: {exc}")
         except Exception as notify_exc:
             app.logger.exception("Could not post Jira error to Teams for %s: %s", ticket_id, notify_exc)
+        return {"status": "error", "ticket_id": ticket_id, "detail": str(exc)}
     except Exception as exc:
         handle_error("process_ticket", type(exc).__name__, str(exc), {"ticket_id": ticket_id})
         try:
             post_text(f"Unexpected error while processing {ticket_id}: {exc}")
         except Exception as notify_exc:
             app.logger.exception("Could not post process_ticket error to Teams for %s: %s", ticket_id, notify_exc)
+        return {"status": "error", "ticket_id": ticket_id, "detail": str(exc)}
 
 
 def navigate_after_confirm(ticket_id: str) -> None:

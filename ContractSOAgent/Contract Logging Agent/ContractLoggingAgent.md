@@ -384,11 +384,13 @@ Production readiness history and final rules:
 - Production Teams test completed successfully: Teams ticket message -> confirmation card -> Confirm -> JSW Steel Salesforce portal create/save -> generated Contract Number -> Teams success card.
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.
+- Confirmation-card delivery fix on 2026-05-07: `/contract-webhook` no longer starts `process_ticket` in a daemon background thread. It fetches Jira and posts the confirmation card while the request is active, then returns the same Teams acknowledgement. Cloud Run can throttle CPU after a response, so background Teams/Power Automate posting was unreliable and caused tickets to acknowledge without showing the Confirm card.
 
 Final Playwright production rules saved on 2026-05-07:
 
 - Keep Contract Status Agent and Contract Logging Agent independent. Do not change the status agent service, root Dockerfile, or root entrypoint for logging-agent work.
 - `/contract-confirm` must run JSW Steel Salesforce contract creation synchronously, not in a daemon background thread, so Cloud Run keeps CPU active and logs the full Playwright journey.
+- `/contract-webhook` must also post the Jira confirmation card synchronously before returning; do not use a daemon background thread for Teams/Power Automate card delivery on Cloud Run.
 - Use fixed Chromium viewport `1920x1080` in Cloud Run because Salesforce Lightning rendered differently in headless mode with smaller/default sizing.
 - Before filling, verify the New Contract wizard is really open by checking for `New Contract`, `Contract Type`, and `Sold To Party`.
 - Sold To can auto-populate Ship To and Payer. Clear those selected pills before applying the confirmed Ship To and Payer values.

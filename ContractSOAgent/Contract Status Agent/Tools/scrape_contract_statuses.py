@@ -399,22 +399,36 @@ def scrape_approval_details(page, contracts: list) -> None:
                 page.wait_for_timeout(3_000)
 
             # Use JS to scan ALL table rows (not just tbody) for the first Pending row.
-            # Approval History cols: Step Name(0), Date(1), Status(2), Comments(3), Assigned To(4)
-            # Use cells[-1] for Assigned To so it works whether Comments column is present or not.
+            # Salesforce renders date cells via <lightning-formatted-date-time> (shadow DOM),
+            # so plain innerText returns "" for those cells. getCellText() falls back to
+            # walking each child's shadowRoot so the date value is captured.
+            # Column layout: Step Name | Date | Status | Assigned To | Actual Approver | Comments | Actions
+            # We use pendingIdx (the Status column) as an anchor for relative offsets so the
+            # mapping is robust whether or not a leading row-number column is present.
             result = page.evaluate("""
                 () => {
+                    function getCellText(td) {
+                        const t = td.innerText.trim();
+                        if (t) return t;
+                        for (const el of td.querySelectorAll('*')) {
+                            if (el.shadowRoot) {
+                                const st = (el.shadowRoot.textContent || '').trim();
+                                if (st) return st;
+                            }
+                        }
+                        return (td.textContent || '').trim();
+                    }
                     const rows = [...document.querySelectorAll('table tr')];
                     for (const row of rows) {
-                        const cells = [...row.querySelectorAll('th, td')].map(c => c.innerText.trim());
+                        const cells = [...row.querySelectorAll('th, td')].map(getCellText);
                         if (cells.length < 3) continue;
-                        const hasPending = cells.some(c => c.trim().toLowerCase() === 'pending');
-                        if (!hasPending) continue;
-                        return { cells: cells };
+                        const pendingIdx = cells.findIndex(c => c.trim().toLowerCase() === 'pending');
+                        if (pendingIdx === -1) continue;
+                        return { cells: cells, pendingIdx: pendingIdx };
                     }
-                    // Debug: return row count and first few rows for diagnosis
                     const allRows = [...document.querySelectorAll('table tr')];
                     const sample = allRows.slice(0, 5).map(r =>
-                        [...r.querySelectorAll('th, td')].map(c => c.innerText.trim())
+                        [...r.querySelectorAll('th, td')].map(td => td.innerText.trim())
                     );
                     return { cells: null, rowCount: allRows.length, sample: sample };
                 }
@@ -422,13 +436,17 @@ def scrape_approval_details(page, contracts: list) -> None:
 
             if result and result.get("cells"):
                 cells = result["cells"]
-                contract["approval_stage"] = cells[0] if len(cells) > 0 else ""
-                contract["approval_date"]  = cells[1] if len(cells) > 1 else ""
-                contract["pending_with"]   = cells[-1] if len(cells) > 3 else ""
+                pi = result["pendingIdx"]  # index of the "Pending" Status cell
+                # Relative offsets from the Status column (pendingIdx):
+                #   pi-2 = Step Name, pi-1 = Date, pi+1 = Assigned To
+                contract["approval_stage"] = cells[pi - 2] if pi >= 2 else cells[0]
+                contract["approval_date"]  = cells[pi - 1] if pi >= 1 else ""
+                contract["pending_with"]   = cells[pi + 1] if pi + 1 < len(cells) else ""
                 print(
-                    f"  [DEBUG] {contract.get('contract_no')}: "
-                    f"approval_stage={contract['approval_stage']!r} | "
-                    f"pending_with={contract['pending_with']!r} | all cells={cells}"
+                    f"  [DEBUG] {contract.get('contract_no')}: pendingIdx={pi} | "
+                    f"stage={contract['approval_stage']!r} | "
+                    f"date={contract['approval_date']!r} | "
+                    f"with={contract['pending_with']!r} | cells={cells}"
                 )
             else:
                 row_count = result.get("rowCount", 0) if result else 0

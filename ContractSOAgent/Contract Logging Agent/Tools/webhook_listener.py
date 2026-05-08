@@ -40,7 +40,17 @@ LOG_PATH = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else BA
 MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
-GCS_ERROR_LOG_BLOB = "contract-logging-agent/error_memory.json"
+GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
+
+_MEMORY_DEFAULT = {
+    "skill": "Contract Logging Agent",
+    "last_run": None,
+    "last_action": None,
+    "state": {"pending_items": [], "completed_items": [], "run_history": []},
+    "known_issues": [],
+    "errors": [],
+    "successes": [],
+}
 
 
 def _gcs_client():
@@ -51,38 +61,38 @@ def _gcs_client():
         return None
 
 
-def _read_gcs_error_log() -> dict:
+def _read_gcs_memory() -> dict:
     if not GCS_BUCKET:
-        return {"errors": [], "successes": []}
+        return dict(_MEMORY_DEFAULT)
     try:
         client = _gcs_client()
         if not client:
-            return {"errors": [], "successes": []}
-        blob = client.bucket(GCS_BUCKET).blob(GCS_ERROR_LOG_BLOB)
+            return dict(_MEMORY_DEFAULT)
+        blob = client.bucket(GCS_BUCKET).blob(GCS_MEMORY_BLOB)
         if not blob.exists():
-            return {"errors": [], "successes": []}
+            return dict(_MEMORY_DEFAULT)
         return json.loads(blob.download_as_text())
     except Exception:
-        app.logger.exception("Could not read GCS error log")
-        return {"errors": [], "successes": []}
+        app.logger.exception("Could not read GCS memory")
+        return dict(_MEMORY_DEFAULT)
 
 
-def _write_gcs_error_log(data: dict) -> None:
+def _write_gcs_memory(data: dict) -> None:
     if not GCS_BUCKET:
         return
     try:
         client = _gcs_client()
         if not client:
             return
-        blob = client.bucket(GCS_BUCKET).blob(GCS_ERROR_LOG_BLOB)
+        blob = client.bucket(GCS_BUCKET).blob(GCS_MEMORY_BLOB)
         blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
     except Exception:
-        app.logger.exception("Could not write GCS error log")
+        app.logger.exception("Could not write GCS memory")
 
 
 def record_contract_error(ticket_id: str, data: dict, error_message: str) -> None:
-    log = _read_gcs_error_log()
-    log.setdefault("errors", []).append({
+    memory = _read_gcs_memory()
+    memory.setdefault("errors", []).append({
         "timestamp": utc_now(),
         "ticket_id": ticket_id,
         "contract_type": data.get("contract_type"),
@@ -91,14 +101,13 @@ def record_contract_error(ticket_id: str, data: dict, error_message: str) -> Non
         "error_message": error_message[:500],
         "resolved": False,
     })
-    # Keep last 200 error entries
-    log["errors"] = log["errors"][-200:]
-    _write_gcs_error_log(log)
+    memory["errors"] = memory["errors"][-200:]
+    _write_gcs_memory(memory)
 
 
 def record_contract_success(ticket_id: str, data: dict, contract_number: str) -> None:
-    log = _read_gcs_error_log()
-    log.setdefault("successes", []).append({
+    memory = _read_gcs_memory()
+    memory.setdefault("successes", []).append({
         "timestamp": utc_now(),
         "ticket_id": ticket_id,
         "contract_type": data.get("contract_type"),
@@ -106,12 +115,11 @@ def record_contract_success(ticket_id: str, data: dict, contract_number: str) ->
         "division": data.get("division"),
         "contract_number": contract_number,
     })
-    # Mark any prior unresolved errors for same ticket as resolved
-    for entry in log.get("errors", []):
+    for entry in memory.get("errors", []):
         if entry.get("ticket_id") == ticket_id and not entry.get("resolved"):
             entry["resolved"] = True
-    log["successes"] = log["successes"][-200:]
-    _write_gcs_error_log(log)
+    memory["successes"] = memory["successes"][-200:]
+    _write_gcs_memory(memory)
 
 
 @app.get("/health")
@@ -379,31 +387,27 @@ def safe_write_memory_step(step: str, status: str, detail: str, extra: dict | No
 def write_memory_step(step: str, status: str, detail: str, extra: dict | None = None) -> None:
     memory = read_memory()
     history = memory.setdefault("state", {}).setdefault("run_history", [])
-    history.append(
-        {
-            "step": step,
-            "status": status,
-            "detail": detail,
-            "timestamp": utc_now(),
-            "extra": extra or {},
-        }
-    )
+    history.append({
+        "step": step,
+        "status": status,
+        "detail": detail,
+        "timestamp": utc_now(),
+        "extra": extra or {},
+    })
+    memory["state"]["run_history"] = memory["state"]["run_history"][-200:]
     memory["last_run"] = utc_now()
     memory["last_action"] = detail
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     MEMORY_PATH.write_text(json.dumps(memory, indent=2), encoding="utf-8")
+    _write_gcs_memory(memory)
 
 
 def read_memory() -> dict:
+    if GCS_BUCKET:
+        return _read_gcs_memory()
     if MEMORY_PATH.exists():
         return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
-    return {
-        "skill": "Contract Logging Agent",
-        "last_run": None,
-        "last_action": None,
-        "state": {"pending_items": [], "completed_items": [], "run_history": []},
-        "known_issues": [],
-    }
+    return dict(_MEMORY_DEFAULT)
 
 
 def utc_now() -> str:

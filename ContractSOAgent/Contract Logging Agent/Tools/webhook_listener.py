@@ -9,6 +9,7 @@ import hmac
 import json
 import os
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -162,11 +163,13 @@ def contract_webhook():
         return jsonify({"type": "message", "text": "Please send a Jira ticket like O360-15342."})
 
     ticket_id = match.group(1).upper()
-    result = process_ticket(ticket_id)
-    if result.get("status") == "not_found":
-        return jsonify({"type": "message", "text": f"Ticket {ticket_id} was not found in Jira."})
-    if result.get("status") == "error":
-        return jsonify({"type": "message", "text": f"Could not prepare confirmation card for {ticket_id}. Please check logs."})
+
+    def _bg():
+        with app.app_context():
+            process_ticket(ticket_id)
+
+    threading.Thread(target=_bg, daemon=True).start()
+
     return jsonify(
         {
             "type": "message",

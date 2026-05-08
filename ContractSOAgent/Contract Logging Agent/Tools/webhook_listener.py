@@ -122,6 +122,22 @@ def record_contract_success(ticket_id: str, data: dict, contract_number: str) ->
     _write_gcs_memory(memory)
 
 
+def check_past_errors(ticket_id: str, data: dict) -> list:
+    """Return unresolved GCS memory errors matching this contract_type + distribution_channel."""
+    try:
+        memory = _read_gcs_memory()
+        contract_type = (data.get("contract_type") or "").strip()
+        dist_channel  = (data.get("distribution_channel") or "").strip()
+        return [
+            e for e in memory.get("errors", [])
+            if not e.get("resolved")
+            and e.get("contract_type") == contract_type
+            and e.get("distribution_channel") == dist_channel
+        ]
+    except Exception:
+        return []
+
+
 @app.get("/health")
 def health():
     return "OK", 200
@@ -259,6 +275,17 @@ def create_contract_after_confirm(ticket_id: str, data: dict) -> dict:
             {"ticket_id": ticket_id, "missing_fields": missing_fields, "input": data},
         )
         return {"status": "validation_error", "ticket_id": ticket_id, "missing_fields": missing_fields}
+
+    past_errors = check_past_errors(ticket_id, data)
+    if past_errors:
+        app.logger.warning(
+            "[self-learning] %d unresolved prior error(s) for contract_type=%s "
+            "distribution_channel=%s — last: %s",
+            len(past_errors),
+            data.get("contract_type"),
+            data.get("distribution_channel"),
+            past_errors[-1].get("error_message", "")[:200],
+        )
 
     try:
         app.logger.info("Starting JSW Steel Salesforce contract creation for %s", ticket_id)

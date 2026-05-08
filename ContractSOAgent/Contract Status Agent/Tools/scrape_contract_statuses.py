@@ -42,7 +42,8 @@ LOC_PASSWORD  = ("role", "textbox", "Password")     # get_by_role("textbox", nam
 LOC_LOGIN_BTN = ("role", "button",  "Log in")       # get_by_role("button",  name="Log in")
 
 # Contracts list — direct URL confirmed from browser on 2026-04-30
-CONTRACTS_URL = "https://jswsteel.my.site.com/jswone/s/recordlist/Contract/Default?Contract-filterId=JSW_One_All_Contracts"
+CONTRACTS_URL      = "https://jswsteel.my.site.com/jswone/s/recordlist/Contract/Default?Contract-filterId=JSW_One_All_Contracts"
+APPROVAL_STEPS_URL = "https://jswsteel.my.site.com/jswone/s/relatedlist/{unique_id}/ProcessSteps"
 
 # Contracts table — standard Salesforce LWR/Experience Cloud patterns
 # ⚠️  VERIFY these selectors match the live page (run with PLAYWRIGHT_HEADLESS=False)
@@ -233,9 +234,17 @@ def scrape_page(page):
 
     for i, row in enumerate(rows):
         try:
-            cells = row.evaluate(
-                "el => [...el.querySelectorAll('th, td')].map(c => c.innerText.trim())"
-            )
+            cells = row.evaluate("""
+                el => {
+                    const cells = [...el.querySelectorAll('th, td')].map(c => c.innerText.trim());
+                    const link = el.querySelector('a[href]');
+                    const href = link ? link.getAttribute('href') : '';
+                    const parts = href.split('/');
+                    const id = parts.find(s => (s.length === 15 || s.length === 18) && /^[A-Za-z0-9]+$/.test(s));
+                    cells.push(id || '');
+                    return cells;
+                }
+            """)
             if i == 0:
                 print(f"  [DEBUG] First row cells ({len(cells)}): {cells}")
             if len(cells) < 5:
@@ -245,12 +254,14 @@ def scrape_page(page):
             account_name = cells[2]
             status       = cells[3]
             created_date = cells[7]
-            print(f"  [DEBUG] Row {i+1}: {contract_no} | {account_name} | {status} | {created_date}")
+            unique_id    = cells[-1]
+            print(f"  [DEBUG] Row {i+1}: {contract_no} | {account_name} | {status} | {created_date} | {unique_id}")
             contracts.append({
                 "contract_no":  contract_no,
                 "account_name": account_name,
                 "status":       status,
                 "created_date": created_date,
+                "unique_id":    unique_id,
             })
         except Exception as e:
             print(f"  [DEBUG] Row {i+1}: FAILED — {e}")
@@ -286,21 +297,31 @@ def scrape_all_pages(page, run_id, memory):
             stop_early = False
             for row in new_rows:
                 try:
-                    cells = row.evaluate(
-                        "el => [...el.querySelectorAll('th, td')].map(c => c.innerText.trim())"
-                    )
+                    cells = row.evaluate("""
+                        el => {
+                            const cells = [...el.querySelectorAll('th, td')].map(c => c.innerText.trim());
+                            const link = el.querySelector('a[href]');
+                            const href = link ? link.getAttribute('href') : '';
+                            const parts = href.split('/');
+                            const id = parts.find(s => (s.length === 15 || s.length === 18) && /^[A-Za-z0-9]+$/.test(s));
+                            cells.push(id || '');
+                            return cells;
+                        }
+                    """)
                     if len(cells) < 8:
                         continue
                     contract_no  = cells[1]
                     account_name = cells[2]
                     status       = cells[3]
                     created_date = cells[7]
-                    print(f"  {contract_no} | {account_name} | {status} | {created_date}")
+                    unique_id    = cells[-1]
+                    print(f"  {contract_no} | {account_name} | {status} | {created_date} | {unique_id}")
                     all_contracts.append({
                         "contract_no":  contract_no,
                         "account_name": account_name,
                         "status":       status,
                         "created_date": created_date,
+                        "unique_id":    unique_id,
                     })
                     # Early stop only when sorted descending (newest first)
                     if sort_dir == "descending":
@@ -350,6 +371,76 @@ def scrape_all_pages(page, run_id, memory):
     return filtered
 
 
+# ── Phase 5: Scrape Approval History for "In Approval Process" contracts ───────
+def scrape_approval_details(page, contracts: list) -> None:
+    """For each 'In Approval Process' contract navigate to its ProcessSteps page,
+    find the first row where any cell == 'Pending', and populate approval_stage,
+    approval_date, pending_with in-place. Other contracts are left unchanged.
+
+    Table columns (5): Step Name | Date | Status | Comments | Assigned To
+    We use cells[-1] for Assigned To to be robust against column count variations.
+    """
+    for contract in contracts:
+        if contract.get("status") != "In Approval Process":
+            continue
+        unique_id = contract.get("unique_id", "")
+        if not unique_id:
+            print(f"  [DEBUG] {contract.get('contract_no')}: skipping approval scrape — no unique_id")
+            continue
+        try:
+            url = APPROVAL_STEPS_URL.format(unique_id=unique_id)
+            print(f"  [DEBUG] Fetching approval details: {url}")
+            page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+
+            # Wait for any table to appear before querying
+            try:
+                page.wait_for_selector("table", timeout=8_000)
+            except Exception:
+                page.wait_for_timeout(3_000)
+
+            # Use JS to scan ALL table rows (not just tbody) for the first Pending row.
+            # Approval History cols: Step Name(0), Date(1), Status(2), Comments(3), Assigned To(4)
+            # Use cells[-1] for Assigned To so it works whether Comments column is present or not.
+            result = page.evaluate("""
+                () => {
+                    const rows = [...document.querySelectorAll('table tr')];
+                    for (const row of rows) {
+                        const cells = [...row.querySelectorAll('th, td')].map(c => c.innerText.trim());
+                        if (cells.length < 3) continue;
+                        const hasPending = cells.some(c => c.trim().toLowerCase() === 'pending');
+                        if (!hasPending) continue;
+                        return { cells: cells };
+                    }
+                    // Debug: return row count and first few rows for diagnosis
+                    const allRows = [...document.querySelectorAll('table tr')];
+                    const sample = allRows.slice(0, 5).map(r =>
+                        [...r.querySelectorAll('th, td')].map(c => c.innerText.trim())
+                    );
+                    return { cells: null, rowCount: allRows.length, sample: sample };
+                }
+            """)
+
+            if result and result.get("cells"):
+                cells = result["cells"]
+                contract["approval_stage"] = cells[0] if len(cells) > 0 else ""
+                contract["approval_date"]  = cells[1] if len(cells) > 1 else ""
+                contract["pending_with"]   = cells[-1] if len(cells) > 3 else ""
+                print(
+                    f"  [DEBUG] {contract.get('contract_no')}: "
+                    f"approval_stage={contract['approval_stage']!r} | "
+                    f"pending_with={contract['pending_with']!r} | all cells={cells}"
+                )
+            else:
+                row_count = result.get("rowCount", 0) if result else 0
+                sample    = result.get("sample", []) if result else []
+                print(
+                    f"  [DEBUG] {contract.get('contract_no')}: no Pending row found. "
+                    f"table tr count={row_count} | sample rows={sample}"
+                )
+        except Exception as exc:
+            print(f"  [DEBUG] {contract.get('contract_no')} ({unique_id}): approval scrape failed — {exc}")
+
+
 # ── Main run function ──────────────────────────────────────────────────────────
 def run(run_id, memory):
     with sync_playwright() as p:
@@ -361,6 +452,7 @@ def run(run_id, memory):
             navigate_to_contracts(page, run_id, memory)
             all_contracts = scrape_all_pages(page, run_id, memory)
             print(f"\n[DEBUG] Landing URL after navigation: {page.url}")
+            scrape_approval_details(page, all_contracts)
 
             if not all_contracts:
                 log_error(run_id, "scrape", "SCRAPE_EMPTY",

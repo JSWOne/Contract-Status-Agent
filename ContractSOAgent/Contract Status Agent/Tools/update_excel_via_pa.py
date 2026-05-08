@@ -34,7 +34,8 @@ SKILL_NAME = "Contract Status Agent"
 MEMORY_PATH = Path(__file__).parent.parent / "Memory" / "memory.json"
 LOG_PATH = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else Path(__file__).parent.parent / "Logs" / "error.log"
 
-HEADERS = ["Contract No", "Account Name", "Status", "Created Date"]
+HEADERS = ["Contract No", "Account Name", "Status", "Created Date",
+           "Contract Unique ID", "Approval Stage", "Approval Date", "Pending with"]
 
 
 def log_error(
@@ -105,10 +106,14 @@ def write_memory_step(memory, step_name, status, detail="", extra=None):
 
 def normalize_contract(contract):
     return {
-        "contract_no": str(contract.get("contract_no", "")).strip(),
-        "account_name": str(contract.get("account_name", "")).strip(),
-        "status": str(contract.get("status", "")).strip(),
-        "created_date": str(contract.get("created_date", "")).strip(),
+        "contract_no":    str(contract.get("contract_no", "")).strip(),
+        "account_name":   str(contract.get("account_name", "")).strip(),
+        "status":         str(contract.get("status", "")).strip(),
+        "created_date":   str(contract.get("created_date", "")).strip(),
+        "unique_id":      str(contract.get("unique_id", "")).strip(),
+        "approval_stage": str(contract.get("approval_stage", "")).strip(),
+        "approval_date":  str(contract.get("approval_date", "")).strip(),
+        "pending_with":   str(contract.get("pending_with", "")).strip(),
     }
 
 
@@ -133,6 +138,10 @@ def build_workbook_bytes(contracts):
                 normalized["account_name"],
                 normalized["status"],
                 normalized["created_date"],
+                normalized["unique_id"],
+                normalized["approval_stage"],
+                normalized["approval_date"],
+                normalized["pending_with"],
             ]
         )
 
@@ -144,6 +153,10 @@ def build_workbook_bytes(contracts):
         "B": 36,
         "C": 24,
         "D": 24,
+        "E": 24,
+        "F": 24,
+        "G": 24,
+        "H": 22,
     }
     for column, width in widths.items():
         ws.column_dimensions[column].width = width

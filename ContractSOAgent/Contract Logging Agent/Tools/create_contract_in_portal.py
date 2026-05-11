@@ -793,9 +793,10 @@ _STEP1_MARKER = "Contract Type"
 def ensure_second_step(page) -> None:
     """Advance past first wizard page; retries Next if page hasn't moved (handles ZCQT slow server validation)."""
     initial_url = page.url
-    click_next_if_visible(page)
+    clicked = click_next_if_visible(page)
+    log_step(f"first page Next click dispatched={clicked}")
     diagnostics = {}
-    for attempt in range(20):
+    for attempt in range(30):
         page.wait_for_timeout(1_000)
         try:
             # URL change is the most reliable signal — works for any contract type
@@ -807,9 +808,10 @@ def ensure_second_step(page) -> None:
             # If step-1 marker disappeared, we're past page 1 even if URL didn't change
             if _STEP1_MARKER not in body_text:
                 return
-            # Retry Next click at 5s and 10s — ZCQT server-side validation can be slow
-            if attempt in (4, 9):
-                click_next_if_visible(page)
+            # Retry Next click if Salesforce ignores the first footer click.
+            if attempt in (4, 9, 14, 19):
+                clicked = click_next_if_visible(page)
+                log_step(f"first page Next retry attempt={attempt + 1} dispatched={clicked}")
         except Exception:
             pass
     diagnostics = collect_form_diagnostics(page, {})
@@ -1255,8 +1257,39 @@ def click_first_lookup_option(component) -> bool:
 
 
 def click_next_if_visible(page) -> bool:
-    page.keyboard.press("Escape")
-    page.wait_for_timeout(300)
+    """Click the visible Salesforce modal footer Next button."""
+    try:
+        page.locator("body").click(position={"x": 8, "y": 8}, timeout=1_000)
+    except Exception:
+        pass
+    page.wait_for_timeout(250)
+    try:
+        rect = page.evaluate(
+            """
+            () => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return !el.disabled && style.visibility !== 'hidden' && style.display !== 'none'
+                        && rect.width > 0 && rect.height > 0;
+                };
+                const buttons = Array.from(document.querySelectorAll('button'))
+                    .filter(visible)
+                    .filter(button => (button.textContent || '').trim().toLowerCase() === 'next');
+                const footerButton = buttons.find(button => button.closest('.slds-modal__footer')) || buttons[buttons.length - 1];
+                if (!footerButton) return null;
+                footerButton.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = footerButton.getBoundingClientRect();
+                return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
+            }
+            """
+        )
+        if rect:
+            page.mouse.click(rect["x"], rect["y"])
+            log_step("clicked Next using mouse center")
+            return True
+    except Exception as exc:
+        log_step(f"mouse center Next click failed: {exc}")
     try:
         buttons = page.get_by_role("button", name=re.compile("^Next$", re.IGNORECASE))
         for index in range(buttons.count()):
@@ -1266,7 +1299,8 @@ def click_next_if_visible(page) -> bool:
             if not button.is_enabled(timeout=1_000):
                 continue
             button.scroll_into_view_if_needed(timeout=2_000)
-            button.click(timeout=5_000)
+            button.click(timeout=5_000, force=True)
+            log_step("clicked Next using role locator")
             return True
     except Exception:
         pass
@@ -1292,9 +1326,19 @@ def click_next_if_visible(page) -> bool:
             """
         )
         if clicked:
+            log_step("clicked Next using DOM fallback")
             return True
     except Exception:
         pass
+    try:
+        viewport = page.viewport_size or PORTAL_VIEWPORT
+        x = int(viewport["width"] / 2 + 215)
+        y = int(viewport["height"] - 108)
+        page.mouse.click(x, y)
+        log_step(f"clicked Next using viewport fallback at {x},{y}")
+        return True
+    except Exception as exc:
+        log_step(f"viewport fallback Next click failed: {exc}")
     return False
 
 

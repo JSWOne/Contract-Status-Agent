@@ -74,6 +74,12 @@ COMBOBOX_SELECTORS = {
     ],
 }
 
+LOOKUP_VALUE_ALIASES = {
+    # Salesforce lookup search results often show account names, not only SAP codes.
+    # This payer is used by current HRC contract logging tickets.
+    "40102336": ["Jsw One Platforms Limited", "JSW One Platforms Limited"],
+}
+
 
 def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
     """Fill the New Contract form and wait for save, then return contract number."""
@@ -220,6 +226,7 @@ def fill_contract_form(page, data: dict) -> None:
     page.wait_for_timeout(1_500)
     clear_lookup(page, "Payer")
     run_fill_step(page, "Payer", data.get("payer", ""), lambda: fill_lookup(page, "Payer", data.get("payer", "")))
+    ensure_lookup_selected(page, "Payer", data.get("payer", ""), ["Division", "Distribution Channel"])
     page.wait_for_timeout(1_000)
     run_fill_step(page, "Division", data.get("division", ""), lambda: fill_lookup(page, "Division", data.get("division", "")))
     page.wait_for_timeout(1_000)
@@ -234,6 +241,11 @@ def fill_contract_form(page, data: dict) -> None:
         run_fill_step(page, "Contract Source", contract_source, lambda: fill_or_select(page, "Contract Source", contract_source))
     page.wait_for_timeout(1_000)
 
+    print(
+        "[contract-create] first page values "
+        + json.dumps(collect_form_diagnostics(page, data), ensure_ascii=True),
+        flush=True,
+    )
     screenshot(page, "04_first_page_filled")
     log_step("clicking Next on New Contract first page")
     ensure_second_step(page)
@@ -573,6 +585,58 @@ def fill_lookup(page, label: str, value: str) -> None:
         except Exception:
             pass
     fill_input(page, label, value)
+
+
+def ensure_lookup_selected(page, label: str, value: str, next_labels: list[str]) -> None:
+    """Fail fast when a Salesforce lookup still contains only its Clear placeholder."""
+    if not value:
+        return
+    page.wait_for_timeout(800)
+    if lookup_selection_visible(page, label, value, next_labels):
+        return
+    # One retry helps Cloud Run/headless runs where the dropdown opens slowly.
+    clear_lookup(page, label)
+    if fill_named_lookup(page, label, value) or fill_lookup_by_placeholder(page, label, value):
+        page.wait_for_timeout(1_200)
+        if lookup_selection_visible(page, label, value, next_labels):
+            return
+    segment = field_segment(page, label, next_labels)
+    raise RuntimeError(
+        f"{label} lookup did not select a value. Expected {value}; observed {segment or '<blank>'}."
+    )
+
+
+def lookup_selection_visible(page, label: str, value: str, next_labels: list[str]) -> bool:
+    segment = field_segment(page, label, next_labels)
+    if not segment:
+        return False
+    normalized = re.sub(r"\s+", " ", segment).strip().lower()
+    if normalized in {"clear", "* clear", "clear *"}:
+        return False
+    for option in option_variants(value):
+        if option and option.lower() in normalized:
+            return True
+    # Some selected lookup pills show the account name only; any non-placeholder
+    # text between the current label and next label is acceptable for non-payer fields.
+    return label != "Payer" and bool(normalized)
+
+
+def field_segment(page, label: str, next_labels: list[str]) -> str:
+    try:
+        body_text = page.inner_text("body", timeout=2_000)
+    except Exception:
+        return ""
+    compact = re.sub(r"\s+", " ", body_text)
+    label_match = re.search(re.escape(label), compact, re.IGNORECASE)
+    if not label_match:
+        return ""
+    start = label_match.end()
+    end = len(compact)
+    for next_label in next_labels:
+        next_match = re.search(re.escape(next_label), compact[start:], re.IGNORECASE)
+        if next_match:
+            end = min(end, start + next_match.start())
+    return compact[start:end].replace("*", " ").strip()
 
 
 def select_division_option(page, value: str) -> bool:
@@ -1144,11 +1208,11 @@ def fill_lookup_control(page, loc, label: str, value: str, component=None) -> bo
     page.keyboard.press("Delete")
     loc.fill(value)
     page.wait_for_timeout(3_000)
-    if component is not None and click_first_lookup_option(component):
-        log.info("Selected first narrowed lookup option for %s", label)
-        return True
     if click_lookup_option(page, value):
         log.info("Selected lookup %s", label)
+        return True
+    if component is not None and click_first_lookup_option(component):
+        log.info("Selected first narrowed lookup option for %s", label)
         return True
     loc.press("ArrowDown")
     page.wait_for_timeout(300)
@@ -1174,10 +1238,43 @@ def click_first_lookup_option(component) -> bool:
 
 
 def click_next_if_visible(page) -> bool:
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
     try:
-        next_button = page.get_by_role("button", name=re.compile("^Next$", re.IGNORECASE))
-        if next_button.is_visible(timeout=2_000):
-            next_button.click(timeout=5_000)
+        buttons = page.get_by_role("button", name=re.compile("^Next$", re.IGNORECASE))
+        for index in range(buttons.count()):
+            button = buttons.nth(index)
+            if not button.is_visible(timeout=1_000):
+                continue
+            if not button.is_enabled(timeout=1_000):
+                continue
+            button.scroll_into_view_if_needed(timeout=2_000)
+            button.click(timeout=5_000)
+            return True
+    except Exception:
+        pass
+    try:
+        clicked = page.evaluate(
+            """
+            () => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return !el.disabled && style.visibility !== 'hidden' && style.display !== 'none'
+                        && rect.width > 0 && rect.height > 0;
+                };
+                const buttons = Array.from(document.querySelectorAll('button'))
+                    .filter(visible)
+                    .filter(button => (button.textContent || '').trim().toLowerCase() === 'next');
+                const footerButton = buttons.find(button => button.closest('.slds-modal__footer')) || buttons[buttons.length - 1];
+                if (!footerButton) return false;
+                footerButton.scrollIntoView({block: 'center', inline: 'nearest'});
+                footerButton.click();
+                return true;
+            }
+            """
+        )
+        if clicked:
             return True
     except Exception:
         pass
@@ -1316,6 +1413,7 @@ def option_variants(value: str) -> list[str]:
         values.append("ZCDX - JSW DepoDom EXcontra")
     if value.isdigit():
         values.extend([value.zfill(8), value.zfill(10)])
+        values.extend(LOOKUP_VALUE_ALIASES.get(value, []))
     return values
 
 

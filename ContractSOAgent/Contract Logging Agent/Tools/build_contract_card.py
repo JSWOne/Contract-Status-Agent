@@ -5,6 +5,23 @@ Purpose: Prepare contract details and Adaptive Cards for the Teams Contract logg
 
 from datetime import datetime, timedelta
 
+DIVISION_PRODUCTS = {
+    "CRCA":         ["CRCA Coil - (S_CRCACF)", "CRCA Sheet - (S_CRCASF)"],
+    "GI":           ["GI Coil - (S_GICF)", "GI Sheet - (S_GISF)", "HR GI Coil - (S_HRGICF)", "ZM Coil - (S_ZMCF)"],
+    "GL":           ["GL Coil - (S_GLCF)"],
+    "HRC":          ["HR Coil - (S_HRCF)", "HR CTL - (S_HRCTLF)"],
+    "HRPO":         ["HRPO Coil - (S_HRPKLCF)", "HRPO Sheet - (S_HRPKLSF)"],
+    "PPGI":         ["PPGI Coil - (S_PPGICF)", "PPGI Sheet - (S_PPGISF)"],
+    "PPGL":         ["PPGL Coil - (S_PPGLCF)", "PPGL Sheet - (S_PPGLSF)"],
+    "TFS Product":  ["TFS Coil - (S_ECCSCF)"],
+    "TMBP Product": ["TMBP Sheet - (S_TMBPSF)", "TMBP SR Coil - (S_TMBPSRCF)", "TMBP DR Coil - (S_TMBPDRCF)"],
+    "TMBP":         ["TMBP Sheet - (S_TMBPSF)", "TMBP SR Coil - (S_TMBPSRCF)", "TMBP DR Coil - (S_TMBPDRCF)"],
+    "TMT":          ["TMT Bar - (S_TMTBF)", "TMT Bar CBF - (S_TMTBCBF)", "TMT Coil - (S_TMTCF)"],
+    "TPS Product":  ["TPS Coil - (S_ELTPCF)", "TPS Sheet - (S_ELTPSF)"],
+    "WR":           ["WR Coil - (S_WRCF)"],
+    "ZM":           ["ZM Coil - (S_ZMCF)"],
+}
+
 
 def prepare_contract_details(ticket: dict) -> dict:
     fields = ticket.get("custom_fields", {})
@@ -228,6 +245,319 @@ def build_contract_creation_started_card(ticket_id: str) -> dict:
     }
 
 
+def build_sku_card(contract_number: str, division: str = "") -> dict:
+    """Adaptive Card for user to fill SKU line item details."""
+    product_choices = DIVISION_PRODUCTS.get(division, [])
+    if product_choices:
+        product_name_field = {
+            "type": "Input.ChoiceSet",
+            "id": "product_name",
+            "label": "Product Name",
+            "style": "compact",
+            "value": "",
+            "isRequired": True,
+            "choices": [{"title": name, "value": name} for name in product_choices],
+        }
+    else:
+        product_name_field = input_text(
+            "product_name",
+            "Product Name (Division not recognised — enter manually, e.g. HR Coil - (S_HRCF))",
+            "",
+        )
+
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"SKU Line Item — Contract {contract_number}",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Accent",
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "Fill in the SKU details and click Confirm.",
+                "wrap": True,
+                "spacing": "Small",
+                "isSubtle": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": f"Division: {division or 'Unknown'}",
+                "spacing": "Small",
+                "isSubtle": True,
+            },
+            {"type": "Input.Text", "id": "contract_number", "value": contract_number, "isVisible": False},
+            {"type": "Input.Text", "id": "division", "value": division, "isVisible": False},
+            product_name_field,
+            input_text("customer_order_category", "Customer Order Category (e.g. STD)", ""),
+            input_text("sku_description", "SKU Description / Part Number (e.g. 1.6X1060-P1-10748_2004-GR2)", ""),
+            input_text("eq_specif_grp", "Eq. Specification Group (e.g. BIS)", ""),
+            input_text("eq_specifi", "Eq. Specification (e.g. 10748_2004)", ""),
+            input_text("eq_sub_grade", "Eq. Sub Grade (e.g. GR2)", ""),
+            input_text("end_appn", "End Application (e.g. P&T)", ""),
+            input_text("order_qty", "Order Quantity (e.g. 100)", ""),
+            input_text("cust_req_date", "Customer Requested Date (DD/MM/YYYY)", ""),
+            input_text("width", "Width (e.g. 1060.000)", ""),
+            input_text("thickness", "Thickness (e.g. 1.600)", ""),
+            input_text("edge_con", "Edge Condition (e.g. ME)", ""),
+            input_text("plant_code", "Plant Code (e.g. 1001 - Vijayanagar Works)", ""),
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Confirm",
+                "data": {"contract_number": contract_number},
+            }
+        ],
+    }
+
+
+def build_sku_success_card(contract_number: str, line_name: str) -> dict:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"SKU line item added successfully to contract {contract_number}.",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Contract Number", "value": contract_number},
+                    {"title": "Line Item Name", "value": line_name or "-"},
+                ],
+            },
+        ],
+    }
+
+
+def build_sku_failure_card(contract_number: str, error: str) -> dict:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Could not add SKU line item to contract {contract_number}.",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Attention",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Contract Number", "value": contract_number},
+                    {"title": "Error", "value": (error or "-")[:200]},
+                ],
+            },
+        ],
+    }
+
+
+def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
+    """First HRC SKU card: material, SKU/description, and quantity."""
+    contract_number = context.get("contract_number", "")
+    division = context.get("division", "HRC")
+    materials = lookup.get("materials") or _materials_from_skus(lookup.get("skus", []))
+    skus = lookup.get("skus") or []
+    material_choices = _choices(materials)
+    sku_choices = _sku_choices(skus)
+
+    if not material_choices:
+        material_choices = [{"title": "S_HRCF", "value": "S_HRCF"}, {"title": "S_HRCTLF", "value": "S_HRCTLF"}]
+
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Add HRC SKU Details - Contract {contract_number}",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Accent",
+                "wrap": True,
+            },
+            {"type": "FactSet", "facts": [
+                {"title": "Contract Number", "value": contract_number or "-"},
+                {"title": "Division", "value": division or "-"},
+                {"title": "Jira Ticket", "value": context.get("ticket_id") or "-"},
+            ]},
+            hidden_text("contract_number", contract_number),
+            hidden_text("ticket_id", context.get("ticket_id", "")),
+            hidden_text("division", division),
+            hidden_text("bp_code", context.get("sold_to_party", "")),
+            hidden_text("sp_code", context.get("ship_to_party", "")),
+            {
+                "type": "Input.ChoiceSet",
+                "id": "material",
+                "label": "Material Type",
+                "style": "compact",
+                "choices": material_choices,
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "description",
+                "label": "SKU / Description",
+                "style": "compact",
+                "choices": sku_choices,
+            } if sku_choices else input_text("description", "SKU / Description", ""),
+            input_text("qty", "Qty", ""),
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Confirm",
+                "data": {"contract_number": contract_number, "stage": "hrc_sku_select"},
+            }
+        ],
+    }
+
+
+def build_hrc_sku_row_choice_card(context: dict, selection: dict, rows: list[dict], request_id: str) -> dict:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Multiple HRC rows matched contract {context.get('contract_number', '')}",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Accent",
+                "wrap": True,
+            },
+            {"type": "TextBlock", "text": "Select the correct row, then confirm.", "wrap": True},
+            hidden_text("request_id", request_id),
+            hidden_text("contract_number", context.get("contract_number", "")),
+            {
+                "type": "Input.ChoiceSet",
+                "id": "row_index",
+                "label": "Matching Row",
+                "style": "compact",
+                "choices": [
+                    {"title": _row_choice_title(row, index), "value": str(index)}
+                    for index, row in enumerate(rows)
+                ],
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Confirm Row",
+                "data": {"request_id": request_id, "stage": "hrc_sku_row_choice"},
+            }
+        ],
+    }
+
+
+def build_hrc_sku_details_card(
+    context: dict,
+    selection: dict,
+    details: dict,
+    request_id: str,
+) -> dict:
+    material = selection.get("material", "")
+    fields = _hrc_detail_fields(material)
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"Confirm HRC SKU Details - Contract {context.get('contract_number', '')}",
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Accent",
+            "wrap": True,
+        },
+        {"type": "FactSet", "facts": [
+            {"title": "Material", "value": material or "-"},
+            {"title": "SKU", "value": selection.get("description") or "-"},
+            {"title": "Qty", "value": selection.get("qty") or "-"},
+        ]},
+        hidden_text("request_id", request_id),
+        hidden_text("contract_number", context.get("contract_number", "")),
+        hidden_text("ticket_id", context.get("ticket_id", "")),
+        hidden_text("division", context.get("division", "HRC")),
+        hidden_text("bp_code", context.get("sold_to_party", "")),
+        hidden_text("sp_code", context.get("ship_to_party", "")),
+        hidden_text("material", material),
+        hidden_text("description", selection.get("description", "")),
+        hidden_text("qty", selection.get("qty", "")),
+    ]
+    for field_id, label in fields:
+        body.append(input_text(field_id, label, str(details.get(field_id, "") or "")))
+
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": body,
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Confirm SKU Details",
+                "data": {"request_id": request_id, "stage": "hrc_sku_details"},
+            }
+        ],
+    }
+
+
+def build_hrc_sku_confirmed_card(contract_number: str, details: dict) -> dict:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"SKU details confirmed successfully for contract {contract_number}.",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {"type": "FactSet", "facts": [
+                {"title": "Material", "value": details.get("material") or "-"},
+                {"title": "SKU", "value": details.get("description") or "-"},
+                {"title": "Qty", "value": details.get("qty") or "-"},
+            ]},
+        ],
+    }
+
+
+def build_hrc_sku_validation_failed_card(message: str, contract_number: str = "") -> dict:
+    suffix = f" for contract {contract_number}" if contract_number else ""
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"{message}{suffix}.",
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Attention",
+                "wrap": True,
+            }
+        ],
+    }
+
+
 def contract_facts(data: dict) -> list[dict]:
     labels = [
         ("Jira Ticket", "ticket_id"),
@@ -247,6 +577,86 @@ def contract_facts(data: dict) -> list[dict]:
 
 def input_text(field_id: str, label: str, value: str) -> dict:
     return {"type": "Input.Text", "id": field_id, "label": label, "value": value or ""}
+
+
+def hidden_text(field_id: str, value: str) -> dict:
+    return {"type": "Input.Text", "id": field_id, "value": value or "", "isVisible": False}
+
+
+def _choices(values: list) -> list[dict]:
+    seen = set()
+    choices = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        choices.append({"title": text, "value": text})
+    return choices
+
+
+def _materials_from_skus(skus: list[dict]) -> list[str]:
+    return [str(item.get("material") or "").strip() for item in skus if isinstance(item, dict)]
+
+
+def _sku_choices(skus: list[dict]) -> list[dict]:
+    choices = []
+    seen = set()
+    for item in skus:
+        if isinstance(item, dict):
+            material = str(item.get("material") or "").strip()
+            description = str(item.get("description") or item.get("sku") or "").strip()
+        else:
+            material = ""
+            description = str(item or "").strip()
+        if not description:
+            continue
+        key = (material, description)
+        if key in seen:
+            continue
+        seen.add(key)
+        title = f"{material} | {description}" if material else description
+        choices.append({"title": title[:120], "value": description})
+    return choices[:200]
+
+
+def _row_choice_title(row: dict, index: int) -> str:
+    material = _row_get(row, "MATERIAL", "material")
+    desc = _row_get(row, "DESCRIPTION", "description")
+    so_item = _row_get(row, "SO ITEM", "so_item")
+    plant = _row_get(row, "SHIP PLANT", "plant", "plant_code")
+    parts = [str(index + 1), material, desc, so_item, plant]
+    return " | ".join([p for p in parts if p])[:120]
+
+
+def _row_get(row: dict, *keys: str) -> str:
+    lowered = {str(k).strip().lower(): v for k, v in row.items()}
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+        value = lowered.get(key.strip().lower())
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _hrc_detail_fields(material: str) -> list[tuple[str, str]]:
+    fields = [
+        ("customer_order_category", "Customer Order Category"),
+        ("eq_specif_grp", "Eq. Specification Group"),
+        ("eq_specifi", "Eq. Specification"),
+        ("eq_sub_grade", "Eq. Sub Specification"),
+        ("end_appn", "End Application"),
+        ("rh_req", "RH REQ"),
+        ("cust_req_date", "Customer Requested Date"),
+        ("width", "Width"),
+        ("thickness", "Thickness"),
+    ]
+    if str(material or "").strip().upper() == "S_HRCTLF":
+        fields.append(("length", "Length"))
+    fields.append(("edge_con", "Edge Condition"))
+    return fields
 
 
 def strip_leading_zeroes(value: str) -> str:

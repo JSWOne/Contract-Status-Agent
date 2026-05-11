@@ -1,6 +1,6 @@
 # ContractLoggingAgent - Skill Instructions
 > **Parent Orchestrator:** ContractSOAgent  
-> Version: 2.0.0 | Phase: 2 | Status: FULLY DEPLOYED ON GCP — Teams end-to-end tested, GCS error memory active | Last Updated: 2026-05-07
+> Version: 3.0.0 | Phase: 2 | Status: FULLY DEPLOYED ON GCP — Background thread card posting, self-learning pre-check, PA concurrency+timeout fixes live | Last Updated: 2026-05-08
 
 ---
 
@@ -251,7 +251,7 @@ Current deployed service:
 | Public URL | `https://jsw-contract-logging-agent-729173585258.asia-south1.run.app` |
 | Health endpoint | `GET /health` returns `OK` |
 | Deployment type shown in Cloud Run | Container |
-| Latest deployed revision | `jsw-contract-logging-agent-00014-nq2` |
+| Latest deployed revision | `jsw-contract-logging-agent-00028-n9h` |
 | Image tag used | `asia-south1-docker.pkg.dev/ai-for-jswone/contract-agents/contract-logging-agent:35306cb1-9da4-4d94-a469-f3ce998abf1e` |
 | Auto-deploy trigger | `jsw-contract-logging-agent-deploy` |
 | Auto-deploy branch | `deploy-to-statusrepo` |
@@ -385,12 +385,13 @@ Production readiness history and final rules:
 - Keep future Contract Logging Agent changes on branch `deploy-to-statusrepo` until production Teams testing is complete.
 - Optional hardening: move secrets from Cloud Run plain env vars into Secret Manager after the first production test.
 - Confirmation-card delivery fix on 2026-05-07: `/contract-webhook` no longer starts `process_ticket` in a daemon background thread. It fetches Jira and posts the confirmation card while the request is active, then returns the same Teams acknowledgement. Cloud Run can throttle CPU after a response, so background Teams/Power Automate posting was unreliable and caused tickets to acknowledge without showing the Confirm card.
+- **REVERSED on 2026-05-08:** `/contract-webhook` now uses a background daemon thread again for PA card posting (see Section 17). The card must appear AFTER the user's Teams message — returning synchronously before PA posts causes the card to appear before the user's message due to PA processing the trigger immediately. The fix: respond instantly, post card asynchronously. Cloud Run min-instances=1 keeps the container warm so the thread completes.
 
 Final Playwright production rules saved on 2026-05-07:
 
 - Keep Contract Status Agent and Contract Logging Agent independent. Do not change the status agent service, root Dockerfile, or root entrypoint for logging-agent work.
 - `/contract-confirm` must run JSW Steel Salesforce contract creation synchronously, not in a daemon background thread, so Cloud Run keeps CPU active and logs the full Playwright journey.
-- `/contract-webhook` must also post the Jira confirmation card synchronously before returning; do not use a daemon background thread for Teams/Power Automate card delivery on Cloud Run.
+- `/contract-webhook` uses a daemon background thread for PA card posting (reversed 2026-05-08 — see Section 17). `/contract-confirm` still runs Salesforce creation synchronously.
 - Use fixed Chromium viewport `1920x1080` in Cloud Run because Salesforce Lightning rendered differently in headless mode with smaller/default sizing.
 - Before filling, verify the New Contract wizard is really open by checking for `New Contract`, `Contract Type`, and `Sold To Party`.
 - Sold To can auto-populate Ship To and Payer. Clear those selected pills before applying the confirmed Ship To and Payer values.
@@ -452,13 +453,14 @@ O360-15707 is contract type **ZCQT (JSW Dom Contract)**. After clicking Next on 
 - Retry Next click at 5 seconds and 10 seconds if page has not yet moved — handles ZCQT slow server validation.
 - Total timeout extended to 20 seconds.
 
-**`webhook_listener.py` — GCS-backed error memory:**
+**`webhook_listener.py` — GCS-backed unified memory (commit `726adfd`, 2026-05-08):**
 - Fixed `LOG_PATH` — previously wrote to `/app/Logs/error.log` (read-only in Cloud Run). Now uses `/tmp/error.log` when `GCS_MEMORY_BUCKET` is set.
 - Added `GCS_MEMORY_BUCKET` env var (`ai-for-jswone-contract-agent-state`) to the `jsw-contract-logging-agent` Cloud Run service.
-- Added `GCS_ERROR_LOG_BLOB = contract-logging-agent/error_memory.json` in the shared GCS bucket.
-- `record_contract_error()` appends every failed creation with: timestamp, ticket, contract_type, distribution_channel, division, error_message.
-- `record_contract_success()` appends every successful creation and marks prior errors for the same ticket as resolved.
-- Last 200 errors and 200 successes are retained; old entries are trimmed automatically.
+- **Unified into single GCS blob** `contract-logging-agent/memory.json` (eliminated separate `error_memory.json` which caused duplication). The memory.json now holds: `skill`, `last_run`, `last_action`, `state` (run_history, pending_items, completed_items), `known_issues`, `errors[]`, `successes[]`.
+- `_read_gcs_memory()` / `_write_gcs_memory()` are the GCS adapters. `read_memory()` prefers GCS when `GCS_MEMORY_BUCKET` is set, falls back to local file.
+- `write_memory_step()` persists to both local `memory.json` AND GCS after each step.
+- `record_contract_error()` appends every failed creation; `record_contract_success()` appends successes and marks prior errors for the same ticket as resolved.
+- Last 200 run_history entries, 200 errors, and 200 successes are retained; old entries trimmed automatically.
 
 ### Cloud Build Trigger Fix
 
@@ -513,12 +515,29 @@ Over time: error_memory.json contains a history of which contract types / channe
 
 4. **Admin summary card** — Periodically post a Teams card showing: how many contracts succeeded vs failed this week, which contract types are unreliable, and any unresolved error patterns still open.
 
-5. **GCS error log location** — `gs://ai-for-jswone-contract-agent-state/contract-logging-agent/error_memory.json`
+5. **GCS memory location** — `gs://ai-for-jswone-contract-agent-state/contract-logging-agent/memory.json` (unified — replaces the old `error_memory.json` which was eliminated on 2026-05-08)
 
-### Current GCS error memory format
+### Current GCS unified memory format
 
 ```json
 {
+  "skill": "Contract Logging Agent",
+  "last_run": "<ISO timestamp>",
+  "last_action": "<last step description>",
+  "state": {
+    "pending_items": [],
+    "completed_items": [],
+    "run_history": [
+      {
+        "step": "create_contract_in_portal",
+        "status": "success",
+        "detail": "Created contract 00174683 for O360-15705 on JSW Steel Community SF portal",
+        "timestamp": "2026-05-07T13:44:00Z",
+        "extra": { "ticket_id": "O360-15705", "contract_number": "00174683" }
+      }
+    ]
+  },
+  "known_issues": [],
   "errors": [
     {
       "timestamp": "2026-05-07T13:16:45Z",
@@ -542,3 +561,112 @@ Over time: error_memory.json contains a history of which contract types / channe
   ]
 }
 ```
+
+---
+
+## 17. Session 2026-05-08 — PA Fixes, Self-Learning Pre-Check & Card Ordering Fix
+
+### Changes Deployed (revision `jsw-contract-logging-agent-00028-n9h`)
+
+#### 1. Self-Learning Pre-Check (`check_past_errors`)
+
+Added `check_past_errors(ticket_id, data)` helper in `webhook_listener.py` (near `record_contract_error`). Called inside `create_contract_after_confirm()` just before `create_contract_in_portal()`.
+
+- Reads GCS `memory.json`, filters `errors[]` for entries where `contract_type` and `distribution_channel` match the current ticket AND `resolved == False`.
+- If unresolved prior failures found → logs `[self-learning] N unresolved prior error(s) for contract_type=X distribution_channel=Y — last: <message>` to Cloud Run logs.
+- Does **not** block contract creation — warning only.
+- Returns empty list on any GCS read error (safe fallback).
+
+#### 2. Background Thread for Confirmation Card Posting
+
+**Problem:** PA posted the adaptive card immediately after receiving our HTTP trigger. Since the webhook was calling PA synchronously (inside `process_ticket()`), the card appeared in Teams BEFORE the user's O360 message due to timestamp ordering.
+
+**Fix:** `contract_webhook()` now spawns a background `threading.Thread` for `process_ticket()` and returns "Processing..." **instantly** (before Jira fetch). PA then posts the card after the webhook has responded — guaranteeing the card appears chronologically AFTER the user's message.
+
+```python
+def _bg():
+    with app.app_context():
+        process_ticket(ticket_id)
+threading.Thread(target=_bg, daemon=True).start()
+return jsonify({"type": "message", "text": "Processing contract creation for ..."})
+```
+
+**Rule:** `/contract-confirm` still runs Salesforce creation **synchronously** — only `/contract-webhook`'s card posting step is backgrounded.
+
+**Rule:** PA's "Post adaptive card and wait for a response" has **no** "Message ID / reply-to-thread" parameter in the current PA Teams connector version — reply-in-thread is not feasible via PA. Cards are posted as new channel messages (below the user's message).
+
+#### 3. Power Automate Flow Fixes (manual, no code change)
+
+| Fix | Setting | Value |
+|-----|---------|-------|
+| Concurrency Control | Trigger → Settings → Concurrency Control | Limit ON, Degree = 10 |
+| Action timeout | "Post adaptive card and wait for a response" → Settings → Action timeout | `PT1H` |
+
+- **Concurrency = 10:** Multiple O360 tickets can be processed in parallel without PA queuing. Previous default (sequential) caused 9-minute card delays when a prior run was stuck waiting.
+- **PT1H timeout:** Stuck runs (user never clicked Confirm) now auto-cancel after 1 hour instead of waiting indefinitely (previously up to 30 days).
+- Old stuck runs were manually bulk-cancelled via PA Run history → "Cancel all flow runs".
+
+---
+
+## 18. HRC SKU Confirmation Flow - Safe Sidecar Path
+
+Implementation status: added as a separate SKU confirmation path. Existing contract creation routes and Playwright contract creation logic are not changed.
+
+New files:
+
+| File | Purpose |
+|------|---------|
+| `Tools/hrc_master_lookup.py` | Calls the Power Automate HRC master helper flow through `HRC_MASTER_LOOKUP_URL` for `get_sku_choices` and `get_sku_details`. Normalizes BP/SP codes with leading zero support. |
+| `Tools/contract_memory.py` | Reads/writes unified local or GCS memory, finds contract context by Contract Number, stores pending SKU choices, and stores final confirmed SKU details. |
+
+New routes:
+
+| Route | Purpose |
+|-------|---------|
+| `POST /sku-webhook` | Accepts a Teams message containing a Contract Number and posts the HRC SKU selection card. |
+| `POST /sku-select-confirm` | Handles first-card confirmation for Material, SKU/Description, and Qty. Calls the HRC master lookup helper for detailed rows. |
+| `POST /sku-row-confirm` | Handles the optional multiple-row choice card when more than one HRC master row matches. |
+| `POST /sku-details-confirm` | Stores final confirmed HRC SKU details and posts a success card. This phase does not create Salesforce SKU lines. |
+
+New card builders in `Tools/build_contract_card.py`:
+
+| Function | Purpose |
+|----------|---------|
+| `build_hrc_sku_selection_card` | First card with Contract Number, Division, Material dropdown, SKU/Description dropdown, Qty, and Confirm. |
+| `build_hrc_sku_row_choice_card` | Row-choice card when multiple HRC master rows match the selected Material/SKU. |
+| `build_hrc_sku_details_card` | Second card with prefilled or blank HRC line details for user confirmation. |
+| `build_hrc_sku_confirmed_card` | Final success card after confirmed SKU details are stored in memory. |
+| `build_hrc_sku_validation_failed_card` | Short Teams validation/error message for missing context or fields. |
+
+Environment variables added to `.env.example`:
+
+```text
+HRC_MASTER_LOOKUP_URL=
+TEAMS_SKU_LOG_WEBHOOK_URL=
+```
+
+Current HRC SKU phase behavior:
+
+1. User posts a created Contract Number in Teams.
+2. The bot finds the matching contract in Contract Logging memory/GCS.
+3. If no contract is found, a short Teams message is posted.
+4. If the contract division is not `HRC`, a short Teams message says only HRC is enabled for now.
+5. The bot calls Power Automate helper action `get_sku_choices`.
+6. User selects Material, SKU/Description, enters Qty, and confirms.
+7. The bot validates Material, SKU/Description, and Qty.
+8. The bot calls Power Automate helper action `get_sku_details`.
+9. If multiple master rows match, the bot asks the user to pick the correct row.
+10. If no row matches, the second card is shown blank for manual entry.
+11. User confirms final HRC SKU details.
+12. The confirmed SKU details are stored in memory and Teams receives: `SKU details confirmed successfully for contract <contract_number>.`
+
+Safety rule:
+
+- This phase stops at SKU details confirmation only. It does not call `salesforce_add_contract_line.py` and does not create Salesforce SKU lines yet.
+- Existing `/contract-webhook`, `/contract-confirm`, and `create_contract_in_portal.py` behavior must remain untouched.
+
+
+- `/contract-webhook` returns instantly via background thread; card is posted by PA after the response — card always appears after the user's message in the channel.
+- PA concurrency must be set to ≥ 10 to prevent card delivery delays.
+- PT1H timeout prevents accumulation of stuck PA runs that clutter the channel with old Confirm cards.
+- Old stuck PA runs must be cancelled manually if they accumulate (or will auto-expire after 1 hour with PT1H set).

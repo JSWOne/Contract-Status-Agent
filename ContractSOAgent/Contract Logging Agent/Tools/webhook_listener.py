@@ -10,7 +10,7 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,19 +22,35 @@ from build_contract_card import (
     build_contract_validation_failed_card,
     build_contract_created_card,
     build_confirmation_card,
+    build_hrc_sku_confirmed_card,
+    build_hrc_sku_details_card,
+    build_hrc_sku_row_choice_card,
+    build_hrc_sku_selection_card,
+    build_hrc_sku_validation_failed_card,
     build_navigation_success_card,
     prepare_contract_details,
+    build_sku_card,
+    build_sku_success_card,
+    build_sku_failure_card,
+)
+from contract_memory import (
+    find_contract_context,
+    get_sku_pending_request,
+    save_sku_pending_request,
+    store_confirmed_hrc_sku,
 )
 from create_contract_in_portal import create_contract_in_portal
 from fetch_jira_ticket import JiraAuthError, JiraConnectionError, fetch_jira_ticket
+from hrc_master_lookup import get_sku_choices, get_sku_details
 from navigate_contract_page import navigate_to_contract_page
-from notify_teams import post_card, post_text
+from notify_teams import post_card, post_text, post_sku_card
 
 
 load_dotenv(Path(__file__).with_name(".env"))
 
 app = Flask(__name__)
 TICKET_PATTERN = re.compile(r"\b(O360-\d+)\b", re.IGNORECASE)
+CONTRACT_PATTERN = re.compile(r"\b(\d{7,9})\b")
 BASE_DIR = Path(__file__).parent.parent
 # /app is read-only in Cloud Run — use /tmp for local files
 LOG_PATH = Path("/tmp/error.log") if os.environ.get("GCS_MEMORY_BUCKET") else BASE_DIR / "Logs" / "error.log"
@@ -213,6 +229,302 @@ def contract_confirm():
     return jsonify(result), status_code
 
 
+@app.post("/sku-webhook")
+def sku_webhook():
+    raw_body = request.get_data()
+    token = os.getenv("TEAMS_SKU_BOT_TOKEN", "")
+    if not validate_hmac(raw_body, request.headers.get("Authorization", ""), token):
+        return jsonify({"type": "message", "text": "HMAC validation failed."})
+
+    body = request.get_json(force=True, silent=True) or {}
+    message_text = extract_message_text(body)
+    match = CONTRACT_PATTERN.search(message_text)
+    if not match:
+        return jsonify({"type": "message",
+                        "text": "Please send a contract number like: @addskubot 00174876"})
+
+    contract_number = match.group(1)
+
+    def _bg():
+        with app.app_context():
+            _post_sku_confirmation_card(contract_number)
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({
+        "type": "message",
+        "text": (
+            f"Preparing SKU card for contract {contract_number}. "
+            "I will post the card to this channel shortly."
+        ),
+    })
+
+
+@app.post("/sku-confirm")
+def sku_confirm():
+    data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
+    contract_number = (data.get("contract_number") or "").strip()
+    if not contract_number:
+        return jsonify({"status": "error", "detail": "missing contract_number"}), 400
+
+    line_data = {
+        "division":                data.get("division", ""),
+        "product_name":            data.get("product_name", ""),
+        "customer_order_category": data.get("customer_order_category", ""),
+        "sku_description":         data.get("sku_description", ""),
+        "eq_specif_grp":           data.get("eq_specif_grp", ""),
+        "eq_specifi":              data.get("eq_specifi", ""),
+        "eq_sub_grade":            data.get("eq_sub_grade", ""),
+        "end_appn":                data.get("end_appn", ""),
+        "order_qty":               data.get("order_qty", ""),
+        "cust_req_date":           data.get("cust_req_date", ""),
+        "width":                   data.get("width", ""),
+        "thickness":               data.get("thickness", ""),
+        "edge_con":                data.get("edge_con", ""),
+        "plant_code":              data.get("plant_code", ""),
+    }
+
+    _run_sku_creation(contract_number, line_data)
+    return jsonify({"status": "success", "contract_number": contract_number})
+
+
+@app.post("/sku-select-confirm")
+def sku_select_confirm():
+    data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
+    contract_number = (data.get("contract_number") or "").strip()
+    material = (data.get("material") or "").strip()
+    description = (data.get("description") or data.get("sku_description") or "").strip()
+    qty = (data.get("qty") or data.get("order_qty") or "").strip()
+
+    missing = []
+    if not contract_number:
+        missing.append("Contract Number")
+    if is_blank_card_value(material):
+        missing.append("Material")
+    if is_blank_card_value(description):
+        missing.append("SKU / Description")
+    if is_blank_card_value(qty):
+        missing.append("Qty")
+    if missing:
+        message = f"Please fill {', '.join(missing)} before confirming"
+        app.logger.info("[hrc-sku] validation failed for %s: %s", contract_number, ", ".join(missing))
+        post_sku_card(build_hrc_sku_validation_failed_card(message, contract_number))
+        return jsonify({"status": "validation_error", "missing_fields": missing}), 400
+
+    context = _context_from_memory_or_payload(contract_number, data)
+    selection = {"material": material, "description": description, "qty": qty}
+    app.logger.info(
+        "[hrc-sku] %s: selected material=%s description=%s qty=%s",
+        contract_number,
+        material,
+        description,
+        qty,
+    )
+
+    try:
+        lookup = get_sku_details(
+            "HRC",
+            context.get("sold_to_party", ""),
+            context.get("ship_to_party", ""),
+            material,
+            description,
+        )
+        rows = lookup.get("rows") or []
+        request_id = save_sku_pending_request(
+            {"contract_number": contract_number, "context": context, "selection": selection, "rows": rows}
+        )
+        if len(rows) > 1:
+            post_sku_card(build_hrc_sku_row_choice_card(context, selection, rows, request_id))
+            return jsonify({"status": "row_choice_required", "request_id": request_id, "rows": len(rows)})
+
+        details = _details_from_row(rows[0], material) if rows else _manual_hrc_details(selection)
+        post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))
+        return jsonify({"status": "details_card_posted", "request_id": request_id, "rows": len(rows)})
+    except Exception as exc:
+        app.logger.exception("[hrc-sku] detail lookup failed for %s: %s", contract_number, exc)
+        post_sku_card(build_hrc_sku_validation_failed_card("Could not fetch HRC SKU details. Detailed error is available in Cloud Run logs", contract_number))
+        return jsonify({"status": "error", "detail": str(exc)}), 500
+
+
+@app.post("/sku-row-confirm")
+def sku_row_confirm():
+    data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
+    request_id = (data.get("request_id") or "").strip()
+    row_index_raw = (data.get("row_index") or "").strip()
+    pending = get_sku_pending_request(request_id) if request_id else None
+    if not pending:
+        return jsonify({"status": "error", "detail": "pending SKU request not found"}), 404
+    try:
+        row_index = int(row_index_raw)
+        row = pending.get("rows", [])[row_index]
+    except Exception:
+        post_sku_card(build_hrc_sku_validation_failed_card("Please select one matching row", pending.get("contract_number", "")))
+        return jsonify({"status": "validation_error", "detail": "invalid row_index"}), 400
+
+    context = pending.get("context", {})
+    selection = pending.get("selection", {})
+    details = _details_from_row(row, selection.get("material", ""))
+    post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))
+    return jsonify({"status": "details_card_posted", "request_id": request_id, "row_index": row_index})
+
+
+@app.post("/sku-details-confirm")
+def sku_details_confirm():
+    data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
+    contract_number = (data.get("contract_number") or "").strip()
+    if not contract_number:
+        return jsonify({"status": "error", "detail": "missing contract_number"}), 400
+
+    material = (data.get("material") or "").strip()
+    description = (data.get("description") or "").strip()
+    qty = (data.get("qty") or "").strip()
+    missing = []
+    for label, key in [("Material", material), ("SKU / Description", description), ("Qty", qty)]:
+        if is_blank_card_value(key):
+            missing.append(label)
+    if missing:
+        post_sku_card(build_hrc_sku_validation_failed_card(f"Please fill {', '.join(missing)} before confirming SKU details", contract_number))
+        return jsonify({"status": "validation_error", "missing_fields": missing}), 400
+
+    details = dict(data)
+    store_confirmed_hrc_sku(contract_number, details)
+    safe_write_memory_step(
+        "hrc_sku_details_confirmed",
+        "success",
+        f"Confirmed HRC SKU details for contract {contract_number}",
+        {"contract_number": contract_number, "details": details},
+    )
+    post_sku_card(build_hrc_sku_confirmed_card(contract_number, details))
+    return jsonify({"status": "success", "contract_number": contract_number})
+
+
+def _post_sku_confirmation_card(contract_number: str) -> None:
+    try:
+        app.logger.info("[hrc-sku] Loading contract context for %s", contract_number)
+        context = find_contract_context(contract_number)
+        if not context:
+            post_sku_card(build_hrc_sku_validation_failed_card("Could not find this contract in Contract Logging memory", contract_number))
+            return
+
+        division = (context.get("division") or "").strip().upper()
+        if division != "HRC":
+            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC SKU confirmation is enabled for now", contract_number))
+            return
+
+        if not context.get("sold_to_party") or not context.get("ship_to_party"):
+            post_sku_card(build_hrc_sku_validation_failed_card("Could not find Sold To / Ship To party codes in memory", contract_number))
+            return
+
+        lookup = get_sku_choices("HRC", context.get("sold_to_party", ""), context.get("ship_to_party", ""))
+        card = build_hrc_sku_selection_card(context, lookup)
+        post_sku_card(card)
+        safe_write_memory_step(
+            "post_hrc_sku_selection_card",
+            "success",
+            f"Posted HRC SKU selection card for contract {contract_number}",
+            {"contract_number": contract_number, "context": context},
+        )
+    except Exception as exc:
+        app.logger.exception("[sku] Failed to post SKU card for %s: %s", contract_number, exc)
+        try:
+            post_sku_card(build_hrc_sku_validation_failed_card("Could not post HRC SKU card. Detailed error is available in Cloud Run logs", contract_number))
+        except Exception:
+            pass
+
+
+def _run_sku_creation(contract_number: str, line_data: dict) -> None:
+    try:
+        from salesforce_add_contract_line import salesforce_add_contract_line
+
+        app.logger.info("[sku] Starting line item creation for contract %s", contract_number)
+        line_name = salesforce_add_contract_line(contract_number, line_data)
+        if not line_name:
+            raise RuntimeError("Contract line name was not captured after Save")
+        app.logger.info("[sku] Line created: %s", line_name)
+        post_sku_card(build_sku_success_card(contract_number, line_name))
+        safe_write_memory_step(
+            "create_sku_line",
+            "success",
+            f"Created SKU line {line_name} for contract {contract_number}",
+            {"contract_number": contract_number, "line_name": line_name, "input": line_data},
+        )
+        record_contract_success(contract_number, line_data, line_name)
+    except Exception as exc:
+        app.logger.exception("[sku] Failed for contract %s: %s", contract_number, exc)
+        try:
+            post_sku_card(build_sku_failure_card(contract_number, str(exc)))
+        except Exception as notify_exc:
+            app.logger.exception("[sku] Could not post failure card: %s", notify_exc)
+        record_contract_error(contract_number, line_data, str(exc))
+
+
+def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:
+    context = find_contract_context(contract_number) or {"contract_number": contract_number}
+    fallback_keys = {
+        "ticket_id": "ticket_id",
+        "division": "division",
+        "sold_to_party": "bp_code",
+        "ship_to_party": "sp_code",
+    }
+    for target, source in fallback_keys.items():
+        if not context.get(target) and data.get(source):
+            context[target] = str(data.get(source)).strip()
+    context.setdefault("contract_number", contract_number)
+    context.setdefault("division", "HRC")
+    return context
+
+
+def _manual_hrc_details(selection: dict) -> dict:
+    return {
+        "customer_order_category": "",
+        "eq_specif_grp": "",
+        "eq_specifi": "",
+        "eq_sub_grade": "",
+        "end_appn": "",
+        "rh_req": "N",
+        "cust_req_date": (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%d-%b-%Y"),
+        "width": "",
+        "thickness": "",
+        "length": "",
+        "edge_con": "",
+        "material": selection.get("material", ""),
+        "description": selection.get("description", ""),
+        "qty": selection.get("qty", ""),
+    }
+
+
+def _details_from_row(row: dict, material: str) -> dict:
+    details = _manual_hrc_details({"material": material})
+    details.update(
+        {
+            "customer_order_category": _row_value(row, "CUST ORDER", "customer_order_category", "Cust.Grp", "Cust Grp"),
+            "eq_specif_grp": _row_value(row, "EqSpecifGrp", "EQ SPECIF GRP", "eq_specif_grp"),
+            "eq_specifi": _row_value(row, "EqSpecifi", "EQ SPECIFI", "eq_specifi"),
+            "eq_sub_grade": _row_value(row, "EqSub_Grade", "EQ SUB GRADE", "eq_sub_grade"),
+            "end_appn": _row_value(row, "END_APPN", "END APPN", "end_appn"),
+            "rh_req": _row_value(row, "RH REQ", "rh_req") or "N",
+            "cust_req_date": _row_value(row, "Customer Requested Date", "CUST REQ DATE", "cust_req_date")
+            or details["cust_req_date"],
+            "width": _row_value(row, "WIDTH", "width"),
+            "thickness": _row_value(row, "THICKNESS", "thickness"),
+            "length": _row_value(row, "LENGTH", "length"),
+            "edge_con": _row_value(row, "EDGE_CON", "EDGE CON", "edge_con"),
+        }
+    )
+    return details
+
+
+def _row_value(row: dict, *keys: str) -> str:
+    lowered = {str(k).strip().lower(): v for k, v in row.items()}
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+        value = lowered.get(key.strip().lower())
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
 def process_ticket(ticket_id: str) -> dict:
     try:
         ticket = fetch_jira_ticket(ticket_id)
@@ -362,7 +674,12 @@ def normalise_confirm_payload(payload: dict) -> dict:
         candidates.append(response.get("data") if isinstance(response.get("data"), dict) else None)
 
     for candidate in candidates:
-        if isinstance(candidate, dict) and candidate.get("ticket_id"):
+        if isinstance(candidate, dict) and (
+            candidate.get("ticket_id")
+            or candidate.get("contract_number")
+            or candidate.get("request_id")
+            or candidate.get("stage")
+        ):
             return candidate
     return payload
 

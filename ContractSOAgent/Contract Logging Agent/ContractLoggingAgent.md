@@ -670,3 +670,187 @@ Safety rule:
 - PA concurrency must be set to ≥ 10 to prevent card delivery delays.
 - PT1H timeout prevents accumulation of stuck PA runs that clutter the channel with old Confirm cards.
 - Old stuck PA runs must be cancelled manually if they accumulate (or will auto-expire after 1 hour with PT1H set).
+
+---
+
+## 19. Session 2026-05-11 - HRC SKU Flow Deployment to Cloud Run
+
+### Deployment Completed
+
+The HRC SKU confirmation flow was deployed to the existing Contract Logging Cloud Run service without pushing to `main` and without touching the Contract Status Agent production service.
+
+Deployment details:
+
+| Item | Value |
+|------|-------|
+| Local branch | `deploy-zcqt-fix` |
+| Commit | `5007977 feat: add HRC SKU confirmation flow` |
+| Pushed branch | `statusrepo/deploy-to-statusrepo` |
+| Trigger used | `jsw-contract-logging-agent-deploy` |
+| Trigger file | `cloudbuild-contract-logging.yaml` |
+| Build ID | `743b5f6a-59cd-4c0f-b191-449ab1017137` |
+| Build status | `SUCCESS` |
+| Logging service revision | `jsw-contract-logging-agent-00030-p6w` |
+| Logging service URL | `https://jsw-contract-logging-agent-blajkpcmsa-el.a.run.app` |
+| Health check | `/health` returned `OK` |
+
+Important safety note:
+
+- Code was pushed only to `deploy-to-statusrepo`.
+- The `main` branch was not pushed.
+- The Contract Status Agent Cloud Run service was not redeployed.
+- Contract Status Agent remained on revision `jsw-contract-status-agent-00044-gs2` during this deployment.
+
+### Cloud Run Environment Status
+
+Configured/present on Cloud Run:
+
+| Env Var | Status |
+|---------|--------|
+| `TEAMS_SKU_LOG_WEBHOOK_URL` | Added to Contract Logging Cloud Run revision `00030-p6w` |
+| `GCS_MEMORY_BUCKET` | Already present |
+| Contract creation env vars | Already present |
+
+Still pending:
+
+| Env Var | Reason |
+|---------|--------|
+| `HRC_MASTER_LOOKUP_URL` | Required for the HRC SKU flow to fetch Material, SKU/Description, and detailed row data from the Excel master through Power Automate. |
+
+Until `HRC_MASTER_LOOKUP_URL` is configured, the deployed service can run and remain healthy, but the HRC SKU card flow cannot load SKU choices from the master file.
+
+### HRC SKU Flow Testing Plan on Teams
+
+Use this after the Power Automate helper flow for HRC master lookup is ready and its URL is configured as `HRC_MASTER_LOOKUP_URL`.
+
+1. Confirm the logging service is live:
+
+```powershell
+Invoke-RestMethod "https://jsw-contract-logging-agent-blajkpcmsa-el.a.run.app/health"
+```
+
+Expected output:
+
+```text
+OK
+```
+
+2. In Teams, go to:
+
+```text
+SO Contract Agent -> Contract logging
+```
+
+3. Post a contract number that already exists in Contract Logging memory and was created through this bot, for example:
+
+```text
+00174683
+```
+
+4. Expected behavior:
+
+- Bot finds the contract in memory/GCS.
+- Bot confirms the division is `HRC`.
+- Bot calls `HRC_MASTER_LOOKUP_URL` with action `get_sku_choices`.
+- Teams receives the first HRC SKU adaptive card.
+
+5. First card should show:
+
+| Field | Expected |
+|-------|----------|
+| Contract Number | Prefilled/read-only |
+| Division | Prefilled/read-only as `HRC` |
+| Material | Dropdown from HRC master lookup |
+| SKU/Description | Dropdown from HRC master lookup |
+| Qty | User input |
+| Confirm | Button |
+
+6. Select Material, SKU/Description, enter Qty, then click Confirm.
+
+7. Expected second step:
+
+- Bot validates Material, SKU/Description, and Qty.
+- Bot calls `HRC_MASTER_LOOKUP_URL` with action `get_sku_details`.
+- If one row matches, Teams shows the second prefilled details card.
+- If multiple rows match, Teams shows the row-choice card.
+- If no rows match, Teams shows a blank/manual details card.
+
+8. Confirm the second card.
+
+9. Expected final Teams message:
+
+```text
+SKU details confirmed successfully for contract <contract_number>.
+```
+
+10. Confirm memory was updated:
+
+- `Memory/memory.json` locally during local tests, or
+- GCS `memory.json` during Cloud Run tests.
+
+The confirmed line details should appear under the SKU confirmation memory area.
+
+### Negative Tests
+
+Run these before enabling this for wider use:
+
+| Test | Expected Result |
+|------|-----------------|
+| Post an unknown contract number | Teams posts a short "contract not found" message. |
+| Post a non-HRC contract number | Teams posts that only HRC is enabled for now. |
+| Click first Confirm without Material | Teams posts/fails with "Please fill Material". |
+| Click first Confirm without SKU/Description | Teams posts/fails with "Please fill SKU/Description". |
+| Click first Confirm without Qty | Teams posts/fails with "Please fill Qty". |
+| Lookup returns multiple rows | Teams shows row-choice card. |
+| Lookup returns no rows | Teams shows blank/manual second details card. |
+
+### Pending Before Full HRC SKU Testing
+
+1. Create/finish the Power Automate helper flow that reads the HRC master file from SharePoint/OneDrive.
+2. Configure the helper flow URL on Cloud Run:
+
+```text
+HRC_MASTER_LOOKUP_URL=<Power Automate HTTP URL>
+```
+
+3. Run one Teams test using a known HRC contract from memory.
+4. Verify Cloud Run logs show:
+
+```text
+POST /sku-webhook
+POST /sku-select-confirm
+POST /sku-details-confirm
+```
+
+5. Verify final confirmed SKU details are stored in memory/GCS.
+
+### Current Scope Boundary
+
+This deployment only confirms and stores HRC SKU details. It does not create Salesforce contract line items yet.
+
+Salesforce SKU/line-item creation will be built in the next phase after the HRC SKU confirmation cards are stable.
+
+## Latest Production Fix: Contract Source Default
+
+Date: 11-May-2026
+
+During production testing for `O360-15811`, Cloud Run logs again showed the known first-page issue:
+
+- `filling Contract Source with Standard`
+- `filled Contract Source; observed=<blank>`
+- `New Contract wizard did not reach step 2 after Next`
+
+This matches the earlier saved learning: `Contract Source` is a Salesforce picklist and the portal normally defaults it to `Standard`. Trying to open/fill it in headless Cloud Run can disturb the wizard state and prevent the first page from advancing.
+
+Fix applied:
+
+- If `contract_source` is `Standard`, the Playwright script now skips filling `Contract Source`.
+- The script logs: `skipping Contract Source because Salesforce defaults it to Standard`.
+- Non-Standard contract source values still use the picklist selection path.
+
+Preserved rules:
+
+- Do not touch Contract Status Agent production service.
+- Do not change the Teams/Power Automate confirmation-card contract.
+- Continue to validate/fill `Contract Type`, `Sold To`, `Ship To`, `Payer`, `Division`, and `Distribution Channel` before clicking `Next`.
+- If the wizard does not reach the Purchase Order page after `Next`, stop early and check first-page picklists before debugging PO/date fields.

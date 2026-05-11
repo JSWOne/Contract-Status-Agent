@@ -225,7 +225,13 @@ def fill_contract_form(page, data: dict) -> None:
     page.wait_for_timeout(1_000)
     run_fill_step(page, "Distribution Channel", data.get("distribution_channel", ""), lambda: fill_or_select(page, "Distribution Channel", data.get("distribution_channel", "")))
     page.wait_for_timeout(1_000)
-    run_fill_step(page, "Contract Source", data.get("contract_source", "Standard"), lambda: fill_or_select(page, "Contract Source", data.get("contract_source", "Standard")))
+    contract_source = (data.get("contract_source") or "Standard").strip()
+    if contract_source.lower() == "standard":
+        # Salesforce defaults Contract Source to Standard. Re-opening this picklist in
+        # headless Cloud Run has repeatedly blocked the wizard from advancing.
+        log_step("skipping Contract Source because Salesforce defaults it to Standard")
+    else:
+        run_fill_step(page, "Contract Source", contract_source, lambda: fill_or_select(page, "Contract Source", contract_source))
     page.wait_for_timeout(1_000)
 
     screenshot(page, "04_first_page_filled")

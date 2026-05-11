@@ -23,6 +23,7 @@ load_dotenv(Path(__file__).with_name(".env"), override=True)
 
 log = logging.getLogger(__name__)
 DEBUG_DIR = Path(__file__).parent.parent / ".tmp"
+PORTAL_VIEWPORT = {"width": 1920, "height": 1080}
 CONTRACTS_LIST_URL = os.getenv(
     "JSW_CONTRACTS_URL",
     "https://jswsteel.my.site.com/jswone/s/recordlist/Contract/Default",
@@ -87,9 +88,13 @@ def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
     headless = os.getenv("PLAYWRIGHT_HEADLESS", "False").strip().lower() == "true"
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless, args=["--start-maximized"])
-        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        browser = p.chromium.launch(
+            headless=headless,
+            args=["--start-maximized", "--window-size=1920,1080"],
+        )
+        page = browser.new_page(viewport=PORTAL_VIEWPORT)
         try:
+            ensure_portal_viewport(page)
             print(f"[contract-create] {ticket_id}: login started", flush=True)
             login(page)
             print(f"[contract-create] {ticket_id}: login completed", flush=True)
@@ -124,9 +129,13 @@ def open_new_contract_for_recording(hold_seconds: int = 1800, inspector: bool = 
     """Open the New Contract modal and pause so the user can demonstrate the flow."""
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--start-maximized"])
-        page = browser.new_page(no_viewport=True)
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--start-maximized", "--window-size=1920,1080"],
+        )
+        page = browser.new_page(viewport=PORTAL_VIEWPORT)
         try:
+            ensure_portal_viewport(page)
             login(page)
             navigate_to_new_contract(page)
             dump_html(page, "recording_start_new_contract_form")
@@ -139,6 +148,14 @@ def open_new_contract_for_recording(hold_seconds: int = 1800, inspector: bool = 
             time.sleep(hold_seconds)
         finally:
             browser.close()
+
+
+def ensure_portal_viewport(page) -> None:
+    """Keep Salesforce modal layout stable before filling fields."""
+    try:
+        page.set_viewport_size(PORTAL_VIEWPORT)
+    except Exception:
+        pass
 
 
 def login(page) -> None:

@@ -3,6 +3,7 @@ Tool: build_contract_card.py
 Purpose: Prepare contract details and Adaptive Cards for the Teams Contract logging flow.
 """
 
+import re
 from datetime import datetime, timedelta
 
 DIVISION_PRODUCTS = {
@@ -45,6 +46,7 @@ def prepare_contract_details(ticket: dict) -> dict:
         or get_cf("SHIP PLANT")
         or get_cf("Ship Plant")
         or get_cf("Plant Code")
+        or get_cf("Plant Name")
     )
     po_number = get_cf("PO Number")
     po_date = normalise_date(get_cf("PO Date"))
@@ -57,7 +59,7 @@ def prepare_contract_details(ticket: dict) -> dict:
         "ship_to_party": strip_leading_zeroes(ship_to_raw),
         "payer": "40101601" if payer_code.strip().upper() == "JODL" else "40102336",
         "division": product_type,
-        "ship_plant_code": ship_plant_code,
+        "ship_plant_code": extract_plant_code(ship_plant_code),
         "distribution_channel": "",
         "po_number": po_number,
         "po_date": po_date,
@@ -681,6 +683,12 @@ def _hrc_detail_fields(material: str) -> list[tuple[str, str]]:
 
 def strip_leading_zeroes(value: str) -> str:
     return value.lstrip("0") or value
+
+
+def extract_plant_code(value: str) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"\d+", text)
+    return match.group(0) if match else text
 
 
 def derive_contract_type(customer_type: str, plant_type: str) -> str:

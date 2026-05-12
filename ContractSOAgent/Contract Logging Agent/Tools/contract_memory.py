@@ -130,7 +130,7 @@ def _merge_contract_context(target: dict[str, str], source: dict[str, Any]) -> N
         "division": ("division",),
         "sold_to_party": ("sold_to_party", "sold_to", "bp_code", "b_p_code"),
         "ship_to_party": ("ship_to_party", "ship_to", "sp_code", "s_p_code"),
-        "ship_plant_code": ("ship_plant_code", "ship_plant", "plant_code", "SHIP PLANT", "Ship Plant Code"),
+        "ship_plant_code": ("ship_plant_code", "ship_plant", "plant_code", "SHIP PLANT", "Ship Plant Code", "Plant Name"),
         "payer": ("payer",),
         "distribution_channel": ("distribution_channel",),
         "contract_type": ("contract_type",),

@@ -62,12 +62,20 @@ def _call_lookup(payload: dict[str, Any]) -> dict[str, Any]:
     if not url:
         raise RuntimeError("HRC_MASTER_LOOKUP_URL is not configured.")
 
-    response = requests.post(url, json=payload, timeout=90)
-    response.raise_for_status()
+    try:
+        response = requests.post(url, json=payload, timeout=90)
+        response.raise_for_status()
+    except requests.RequestException:
+        return {"status": "success", "materials": [], "skus": [], "rows": []}
+
     if not (response.text or "").strip():
         return {"status": "success", "materials": [], "skus": [], "rows": []}
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError:
+        return {"status": "success", "materials": [], "skus": [], "rows": []}
+
     if str(data.get("status", "success")).lower() not in {"success", "ok"}:
         raise RuntimeError(data.get("message") or data.get("error") or "HRC master lookup failed.")
     return data

@@ -1053,3 +1053,104 @@ Deployment result:
 | Secret handling | Power Automate URL was configured in Cloud Run env vars only; do not store the signed URL in repo docs. |
 
 HRC SKU confirmation can now call the Power Automate master lookup API. Next validation should be a Teams test with a known HRC contract number from Contract Logging memory.
+
+---
+
+## 23. HRC SKU Card Posting Fix - 2026-05-12
+
+Issue seen during Teams test:
+
+- User posted contract `00175457`.
+- Bot replied with the preparation message.
+- SKU adaptive card did not appear.
+
+Root causes found in Cloud Run logs:
+
+1. `TEAMS_SKU_LOG_WEBHOOK_URL` was incomplete in Cloud Run; it was missing the signed `sp`, `sv`, and `sig` query parameters, causing `401 Unauthorized`.
+2. `HRC_MASTER_LOOKUP_URL` was configured correctly, but the Power Automate lookup flow returned `202` with an empty body and later `502 Bad Gateway`; the bot expected JSON and failed before posting the card.
+3. The SKU webhook used a background thread after returning the Teams acknowledgement. Cloud Run needed CPU outside request handling so the background post could finish reliably.
+
+Fixes applied:
+
+| Fix | Result |
+|-----|--------|
+| Reconfigured full `TEAMS_SKU_LOG_WEBHOOK_URL` in Cloud Run | Signed SKU card-post URL now has `sp`, `sv`, and `sig` |
+| Added fallback handling in `Tools/hrc_master_lookup.py` | Empty/non-JSON/failed lookup responses now return empty `materials`, `skus`, and `rows` instead of crashing |
+| Enabled Cloud Run `--no-cpu-throttling` | Background SKU card worker can continue after Teams acknowledgement |
+
+Deployment result:
+
+| Item | Value |
+|------|-------|
+| Commit | `bf6ffcd fix: fallback when hrc lookup api is unavailable` |
+| Cloud Run revision | `jsw-contract-logging-agent-00046-nvg` |
+| Health check | `/health` returned `OK` |
+| CPU throttling | `false` |
+| Signed URL env check | `TEAMS_SKU_LOG_WEBHOOK_URL` and `HRC_MASTER_LOOKUP_URL` both present with `sig` |
+
+Verification:
+
+- Sent a signed `/sku-webhook` test for contract `00175457`.
+- Cloud Run returned `200`.
+- GCS memory recorded:
+
+```text
+Posted HRC SKU selection card for contract 00175457
+```
+
+Timestamp:
+
+```text
+2026-05-12T11:00:33Z
+```
+
+Current behavior:
+
+- If the HRC master lookup Power Automate flow is unavailable, the first SKU card still posts.
+- It uses fallback HRC material choices and manual SKU/Description entry.
+- To get populated dropdowns from the Excel master, the HRC Master Lookup API flow still needs to return JSON instead of `202` empty or `502`.
+
+---
+
+## 24. HRC SKU Description Dropdown + Match Parameters - 2026-05-12
+
+Updated the HRC SKU first card contract:
+
+- Card now displays the master-match parameters:
+  - `B P Code`
+  - `S P Code`
+  - `SHIP Plant Code`
+- Bot now sends `ship_plant_code` to the HRC Master Lookup API along with `bp_code` and `sp_code`.
+- For compatibility with Power Automate/Excel naming, the lookup request includes all three plant aliases:
+
+```json
+{
+  "ship_plant_code": "1001",
+  "ship_plant": "1001",
+  "plant_code": "1001"
+}
+```
+
+- SKU/Description now renders as an Adaptive Card dropdown when the lookup response returns descriptions in `skus`, `descriptions`, or `rows`.
+- Lookup rows with uppercase Excel-style columns like `MATERIAL`, `DESCRIPTION`, and `SHIP PLANT` are supported.
+- If existing contract memory does not include `ship_plant_code`, the SKU flow tries to fetch the Jira ticket again and enrich the context before calling the master lookup.
+
+Expected HRC Master Lookup API behavior for `get_sku_choices`:
+
+1. Filter the HRC file by `bp_code`, `sp_code`, and `ship_plant_code`.
+2. Return JSON with material and description choices, for example:
+
+```json
+{
+  "status": "success",
+  "materials": ["S_HRCF", "S_HRCTLF"],
+  "skus": [
+    {
+      "material": "S_HRCF",
+      "description": "1.6X1060-P1-10748_2004-GR2"
+    }
+  ]
+}
+```
+
+If the lookup API returns no JSON or fails, the card still posts using fallback material choices and manual description entry.

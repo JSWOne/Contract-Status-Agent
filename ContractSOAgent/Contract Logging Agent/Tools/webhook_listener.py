@@ -131,6 +131,7 @@ def record_contract_success(ticket_id: str, data: dict, contract_number: str) ->
         "distribution_channel": data.get("distribution_channel"),
         "division": data.get("division"),
         "contract_number": contract_number,
+        "input": data,
     })
     for entry in memory.get("errors", []):
         if entry.get("ticket_id") == ticket_id and not entry.get("resolved"):
@@ -333,6 +334,7 @@ def sku_select_confirm():
             "HRC",
             context.get("sold_to_party", ""),
             context.get("ship_to_party", ""),
+            context.get("ship_plant_code", ""),
             material,
             description,
         )
@@ -422,7 +424,13 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
             post_sku_card(build_hrc_sku_validation_failed_card("Could not find Sold To / Ship To party codes in memory", contract_number))
             return {"status": "missing_party_codes", "detail": "sold_to_party or ship_to_party missing"}
 
-        lookup = get_sku_choices("HRC", context.get("sold_to_party", ""), context.get("ship_to_party", ""))
+        context = _enrich_context_from_jira(context)
+        lookup = get_sku_choices(
+            "HRC",
+            context.get("sold_to_party", ""),
+            context.get("ship_to_party", ""),
+            context.get("ship_plant_code", ""),
+        )
         card = build_hrc_sku_selection_card(context, lookup)
         post_sku_card(card)
         safe_write_memory_step(
@@ -474,12 +482,32 @@ def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:
         "division": "division",
         "sold_to_party": "bp_code",
         "ship_to_party": "sp_code",
+        "ship_plant_code": "ship_plant_code",
     }
     for target, source in fallback_keys.items():
         if not context.get(target) and data.get(source):
             context[target] = str(data.get(source)).strip()
     context.setdefault("contract_number", contract_number)
     context.setdefault("division", "HRC")
+    return context
+
+
+def _enrich_context_from_jira(context: dict) -> dict:
+    if context.get("ship_plant_code"):
+        return context
+    ticket_id = (context.get("ticket_id") or "").strip()
+    if not ticket_id:
+        return context
+    try:
+        ticket = fetch_jira_ticket(ticket_id)
+        if not ticket:
+            return context
+        details = prepare_contract_details(ticket)
+        for key in ("ship_plant_code", "sold_to_party", "ship_to_party", "division"):
+            if not context.get(key) and details.get(key):
+                context[key] = str(details.get(key)).strip()
+    except Exception as exc:
+        app.logger.warning("[hrc-sku] Could not enrich context from Jira for %s: %s", ticket_id, exc)
     return context
 
 

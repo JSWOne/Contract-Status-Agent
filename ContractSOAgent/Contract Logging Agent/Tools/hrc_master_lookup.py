@@ -27,13 +27,21 @@ def normalise_party_code(value: str) -> str:
     return digits.zfill(10)
 
 
-def get_sku_choices(division: str, bp_code: str, sp_code: str) -> dict[str, Any]:
+def normalise_plant_code(value: str) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def get_sku_choices(division: str, bp_code: str, sp_code: str, ship_plant_code: str = "") -> dict[str, Any]:
+    plant_code = normalise_plant_code(ship_plant_code)
     return _call_lookup(
         {
             "action": "get_sku_choices",
             "division": division,
             "bp_code": normalise_party_code(bp_code),
             "sp_code": normalise_party_code(sp_code),
+            "ship_plant_code": plant_code,
+            "ship_plant": plant_code,
+            "plant_code": plant_code,
         }
     )
 
@@ -42,15 +50,20 @@ def get_sku_details(
     division: str,
     bp_code: str,
     sp_code: str,
+    ship_plant_code: str,
     material: str,
     description: str,
 ) -> dict[str, Any]:
+    plant_code = normalise_plant_code(ship_plant_code)
     return _call_lookup(
         {
             "action": "get_sku_details",
             "division": division,
             "bp_code": normalise_party_code(bp_code),
             "sp_code": normalise_party_code(sp_code),
+            "ship_plant_code": plant_code,
+            "ship_plant": plant_code,
+            "plant_code": plant_code,
             "material": (material or "").strip(),
             "description": (description or "").strip(),
         }

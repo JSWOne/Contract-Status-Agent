@@ -39,6 +39,13 @@ def prepare_contract_details(ticket: dict) -> dict:
     ship_to_raw = get_cf("Ship to party code") or get_cf("Ship To Party Code")
     payer_code = get_cf("Payer code")
     product_type = get_cf("Product Type")
+    ship_plant_code = (
+        get_cf("Ship Plant Code")
+        or get_cf("SHIP Plant Code")
+        or get_cf("SHIP PLANT")
+        or get_cf("Ship Plant")
+        or get_cf("Plant Code")
+    )
     po_number = get_cf("PO Number")
     po_date = normalise_date(get_cf("PO Date"))
 
@@ -50,6 +57,7 @@ def prepare_contract_details(ticket: dict) -> dict:
         "ship_to_party": strip_leading_zeroes(ship_to_raw),
         "payer": "40101601" if payer_code.strip().upper() == "JODL" else "40102336",
         "division": product_type,
+        "ship_plant_code": ship_plant_code,
         "distribution_channel": "",
         "po_number": po_number,
         "po_date": po_date,
@@ -85,6 +93,7 @@ def build_confirmation_card(data: dict) -> dict:
             input_text("ship_to_party", "Ship to Party", data.get("ship_to_party", "")),
             input_text("payer", "Payer", data.get("payer", "")),
             input_text("division", "Division", data.get("division", "")),
+            hidden_text("ship_plant_code", data.get("ship_plant_code", "")),
             {
                 "type": "Input.ChoiceSet",
                 "id": "distribution_channel",
@@ -372,7 +381,9 @@ def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
     contract_number = context.get("contract_number", "")
     division = context.get("division", "HRC")
     materials = lookup.get("materials") or _materials_from_skus(lookup.get("skus", []))
-    skus = lookup.get("skus") or []
+    skus = lookup.get("skus") or lookup.get("descriptions") or lookup.get("rows") or []
+    if not materials:
+        materials = _materials_from_skus(skus)
     material_choices = _choices(materials)
     sku_choices = _sku_choices(skus)
 
@@ -396,12 +407,16 @@ def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
                 {"title": "Contract Number", "value": contract_number or "-"},
                 {"title": "Division", "value": division or "-"},
                 {"title": "Jira Ticket", "value": context.get("ticket_id") or "-"},
+                {"title": "B P Code", "value": context.get("sold_to_party") or "-"},
+                {"title": "S P Code", "value": context.get("ship_to_party") or "-"},
+                {"title": "SHIP Plant Code", "value": context.get("ship_plant_code") or "-"},
             ]},
             hidden_text("contract_number", contract_number),
             hidden_text("ticket_id", context.get("ticket_id", "")),
             hidden_text("division", division),
             hidden_text("bp_code", context.get("sold_to_party", "")),
             hidden_text("sp_code", context.get("ship_to_party", "")),
+            hidden_text("ship_plant_code", context.get("ship_plant_code", "")),
             {
                 "type": "Input.ChoiceSet",
                 "id": "material",
@@ -565,6 +580,7 @@ def contract_facts(data: dict) -> list[dict]:
         ("Contract Source", "contract_source"),
         ("Sold to Party", "sold_to_party"),
         ("Ship to Party", "ship_to_party"),
+        ("SHIP Plant Code", "ship_plant_code"),
         ("Payer", "payer"),
         ("Division", "division"),
         ("Distribution Channel", "distribution_channel"),
@@ -596,7 +612,11 @@ def _choices(values: list) -> list[dict]:
 
 
 def _materials_from_skus(skus: list[dict]) -> list[str]:
-    return [str(item.get("material") or "").strip() for item in skus if isinstance(item, dict)]
+    materials = []
+    for item in skus:
+        if isinstance(item, dict):
+            materials.append(_row_get(item, "material", "MATERIAL", "Material"))
+    return [material for material in materials if material]
 
 
 def _sku_choices(skus: list[dict]) -> list[dict]:
@@ -604,8 +624,8 @@ def _sku_choices(skus: list[dict]) -> list[dict]:
     seen = set()
     for item in skus:
         if isinstance(item, dict):
-            material = str(item.get("material") or "").strip()
-            description = str(item.get("description") or item.get("sku") or "").strip()
+            material = _row_get(item, "material", "MATERIAL", "Material")
+            description = _row_get(item, "description", "DESCRIPTION", "Description", "sku", "SKU", "SKU_DESCRIPTION")
         else:
             material = ""
             description = str(item or "").strip()

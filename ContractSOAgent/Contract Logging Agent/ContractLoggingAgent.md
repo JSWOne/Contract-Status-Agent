@@ -854,3 +854,202 @@ Preserved rules:
 - Do not change the Teams/Power Automate confirmation-card contract.
 - Continue to validate/fill `Contract Type`, `Sold To`, `Ship To`, `Payer`, `Division`, and `Distribution Channel` before clicking `Next`.
 - If the wizard does not reach the Purchase Order page after `Next`, stop early and check first-page picklists before debugging PO/date fields.
+
+---
+
+## 20. Current HRC Pilot Status - 2026-05-12
+
+### What Is Working Now
+
+The Contract Logging Agent is live on the separate Cloud Run service:
+
+```text
+jsw-contract-logging-agent
+```
+
+The existing Contract Status Agent production service is separate and must remain untouched.
+
+Current HRC pilot scope:
+
+1. User posts an `O360` ticket number in the Teams **Contract logging** channel.
+2. Teams outgoing webhook calls `/contract-webhook`.
+3. The agent fetches Jira details and posts the contract confirmation Adaptive Card through Power Automate.
+4. User reviews/edits values and clicks **Confirm**.
+5. Power Automate posts confirmed details into the channel for audit.
+6. Power Automate posts the progress message:
+
+```text
+Creating Contract on JSW Steel Salesforce for <ticket>. I will post the Contract number card to this channel shortly.
+```
+
+7. Power Automate calls `/contract-confirm`.
+8. Cloud Run runs the Playwright contract creation flow synchronously.
+9. The browser logs into JSW Steel Community Salesforce, opens the New Contract wizard, fills values, saves, extracts the Contract Number, closes the browser, and posts the Contract Number card back to Teams.
+
+### Latest Contract Creation Learnings
+
+These rules must be preserved for the HRC pilot:
+
+| Area | Current Rule |
+|------|--------------|
+| Browser viewport | Keep fixed Cloud Run browser viewport at `1920x1080`; smaller/default sizes can hide the wizard footer or make `Next` unreliable. |
+| Contract Source | If value is `Standard`, do not touch the field. Salesforce defaults it to Standard and opening the picklist can block the wizard from moving to step 2. |
+| Distribution Channel | Must be selected before `Next`. If missing/blank/bullet placeholder, stop before Salesforce and post a short Teams validation message. |
+| Contract Start Date | Do not fill it. Leave Salesforce portal default. |
+| Date format | Use Salesforce format such as `08-May-2026`, not `08/05/2026`. |
+| Second page fields | Fill only `Purchase Order No.`, `Purchase Order Date`, and `Contract End Date`. |
+| Error cards | Teams error card must stay short. Detailed diagnostics belong in Cloud Run logs and memory. |
+| Cloud Run execution | `/contract-confirm` must run synchronously so Playwright keeps CPU and logs are visible. |
+
+### Recent Production Result
+
+The latest Cloud Run production run for `O360-15812` completed contract creation successfully and generated:
+
+```text
+00175457
+```
+
+Older failed Teams cards for the same ticket came from previous runs before the latest Playwright `Next`/viewport hardening.
+
+### HRC SKU Confirmation Flow Added
+
+The HRC SKU sidecar flow has been added without changing the contract creation route contract.
+
+New endpoints:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/sku-webhook` | User posts a Contract Number to start SKU confirmation. |
+| `/sku-select-confirm` | Handles Material, SKU/Description, and Qty confirmation. |
+| `/sku-row-confirm` | Handles multiple matching HRC master rows. |
+| `/sku-details-confirm` | Stores final confirmed SKU details and posts success. |
+
+New helper modules:
+
+| File | Purpose |
+|------|---------|
+| `Tools/hrc_master_lookup.py` | Calls Power Automate helper flow using `HRC_MASTER_LOOKUP_URL`. |
+| `Tools/contract_memory.py` | Finds created contract context from memory/GCS and stores confirmed SKU details. |
+
+Important boundary:
+
+- HRC SKU flow currently confirms and stores SKU details only.
+- It does not create Salesforce contract line items yet.
+- `salesforce_add_contract_line.py` is not part of the active production flow yet.
+
+### HRC SKU Flow Pending
+
+Before full SKU pilot testing:
+
+1. Confirm the Power Automate HRC master helper flow is ready.
+2. Configure Cloud Run env var:
+
+```text
+HRC_MASTER_LOOKUP_URL=<Power Automate helper HTTP URL>
+```
+
+3. Test with a known HRC contract number already created by the bot.
+4. Confirm Teams receives the first SKU card.
+5. Confirm second details card works for:
+   - one matching row
+   - multiple matching rows
+   - no matching row/manual entry
+6. Confirm final SKU details are saved in GCS memory.
+
+### Current Next Work
+
+The HRC pilot is split into two streams:
+
+| Stream | Status |
+|--------|--------|
+| HRC contract creation from `O360` ticket | Working, but continue monitoring live Teams runs for Salesforce timing/picklist issues. |
+| HRC SKU confirmation after contract creation | Built/deployed as sidecar endpoints; waiting for HRC master helper flow URL and Teams testing. |
+
+Do not expand to CRCA, GI, GL, TMT, or other divisions/products until the HRC contract creation and HRC SKU confirmation flow are stable.
+
+---
+
+## 21. Master Lookup Architecture Decision - 2026-05-12
+
+Chosen approach:
+
+Use one generic Power Automate master lookup API flow with separate product/division master files inside the shared master folder.
+
+Recommended structure:
+
+```text
+Contract Master Folder
+  HRC.xlsx
+  CRCA.xlsx
+  GI.xlsx
+  ...
+```
+
+Power Automate flow:
+
+```text
+Contract SKU Master Lookup API
+```
+
+The bot sends:
+
+```json
+{
+  "action": "get_sku_choices",
+  "division": "HRC",
+  "bp_code": "0040123977",
+  "sp_code": "0040111475"
+}
+```
+
+The Power Automate flow should route by `division`:
+
+| Division/Product | PA behavior |
+|------------------|-------------|
+| `HRC` | Read only the HRC master file/table |
+| `CRCA` | Future: read only the CRCA master file/table |
+| `GI` | Future: read only the GI master file/table |
+| Others | Return a controlled "not enabled yet" response until implemented |
+
+Performance decision:
+
+- Do not read every product master file in one run.
+- Read only the selected product/division file based on the incoming `division`.
+- Return only the filtered values needed by the bot, not all 100+ Excel columns.
+- For the first SKU card, return only `materials` and `skus`.
+- For the second details card, return only the matched row fields required for that material type.
+
+Why this approach was selected:
+
+- Only one Cloud Run environment variable is needed for lookup, currently `HRC_MASTER_LOOKUP_URL` and later reusable as a generic master lookup URL.
+- Only one Power Automate HTTP endpoint is needed from the bot side.
+- Each product can still keep its own Excel file and product-specific columns.
+- HRC can be completed first without blocking future CRCA/GI/product work.
+- Future product logic can be added branch by branch inside the lookup flow without changing the Teams bot contract.
+
+Current implementation boundary:
+
+- HRC is the only active product/division for the SKU confirmation pilot.
+- Other product types are intentionally deferred.
+- The SKU confirmation flow still ends at confirming and storing SKU details; Salesforce line-item creation is not active yet.
+
+---
+
+## 22. HRC Master Lookup URL Configured - 2026-05-12
+
+Configured `HRC_MASTER_LOOKUP_URL` on Cloud Run service:
+
+```text
+jsw-contract-logging-agent
+```
+
+Deployment result:
+
+| Item | Value |
+|------|-------|
+| Cloud Run revision | `jsw-contract-logging-agent-00042-bt9` |
+| Traffic | 100% |
+| Health check | `/health` returned `OK` |
+| Secret handling | Power Automate URL was configured in Cloud Run env vars only; do not store the signed URL in repo docs. |
+
+HRC SKU confirmation can now call the Power Automate master lookup API. Next validation should be a Teams test with a known HRC contract number from Contract Logging memory.

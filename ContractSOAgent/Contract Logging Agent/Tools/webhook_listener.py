@@ -245,27 +245,24 @@ def sku_webhook():
 
     contract_number = match.group(1)
 
-    result = _post_sku_confirmation_card(contract_number)
-    if result.get("status") != "success":
-        app.logger.info(
-            "[hrc-sku] %s: selection card was not posted; status=%s detail=%s",
-            contract_number,
-            result.get("status"),
-            result.get("detail"),
-        )
-        return jsonify({
-            "type": "message",
-            "text": (
-                f"I could not prepare the HRC SKU card for contract {contract_number}. "
-                "Detailed reason is posted in this channel or available in Cloud Run logs."
-            ),
-        })
+    def _bg():
+        with app.app_context():
+            result = _post_sku_confirmation_card(contract_number)
+            if result.get("status") != "success":
+                app.logger.info(
+                    "[hrc-sku] %s: selection card was not posted; status=%s detail=%s",
+                    contract_number,
+                    result.get("status"),
+                    result.get("detail"),
+                )
+
+    threading.Thread(target=_bg, daemon=True).start()
 
     return jsonify({
         "type": "message",
         "text": (
             f"Preparing SKU card for contract {contract_number}. "
-            "I have posted the card to this channel."
+            "I will post the SKU selection card to this channel shortly."
         ),
     })
 

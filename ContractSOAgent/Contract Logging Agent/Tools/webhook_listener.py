@@ -245,16 +245,27 @@ def sku_webhook():
 
     contract_number = match.group(1)
 
-    def _bg():
-        with app.app_context():
-            _post_sku_confirmation_card(contract_number)
+    result = _post_sku_confirmation_card(contract_number)
+    if result.get("status") != "success":
+        app.logger.info(
+            "[hrc-sku] %s: selection card was not posted; status=%s detail=%s",
+            contract_number,
+            result.get("status"),
+            result.get("detail"),
+        )
+        return jsonify({
+            "type": "message",
+            "text": (
+                f"I could not prepare the HRC SKU card for contract {contract_number}. "
+                "Detailed reason is posted in this channel or available in Cloud Run logs."
+            ),
+        })
 
-    threading.Thread(target=_bg, daemon=True).start()
     return jsonify({
         "type": "message",
         "text": (
             f"Preparing SKU card for contract {contract_number}. "
-            "I will post the card to this channel shortly."
+            "I have posted the card to this channel."
         ),
     })
 
@@ -397,22 +408,22 @@ def sku_details_confirm():
     return jsonify({"status": "success", "contract_number": contract_number})
 
 
-def _post_sku_confirmation_card(contract_number: str) -> None:
+def _post_sku_confirmation_card(contract_number: str) -> dict:
     try:
         app.logger.info("[hrc-sku] Loading contract context for %s", contract_number)
         context = find_contract_context(contract_number)
         if not context:
             post_sku_card(build_hrc_sku_validation_failed_card("Could not find this contract in Contract Logging memory", contract_number))
-            return
+            return {"status": "not_found", "detail": "contract not found in memory"}
 
         division = (context.get("division") or "").strip().upper()
         if division != "HRC":
             post_sku_card(build_hrc_sku_validation_failed_card("Only HRC SKU confirmation is enabled for now", contract_number))
-            return
+            return {"status": "unsupported_division", "detail": f"division={division or '<blank>'}"}
 
         if not context.get("sold_to_party") or not context.get("ship_to_party"):
             post_sku_card(build_hrc_sku_validation_failed_card("Could not find Sold To / Ship To party codes in memory", contract_number))
-            return
+            return {"status": "missing_party_codes", "detail": "sold_to_party or ship_to_party missing"}
 
         lookup = get_sku_choices("HRC", context.get("sold_to_party", ""), context.get("ship_to_party", ""))
         card = build_hrc_sku_selection_card(context, lookup)
@@ -423,12 +434,14 @@ def _post_sku_confirmation_card(contract_number: str) -> None:
             f"Posted HRC SKU selection card for contract {contract_number}",
             {"contract_number": contract_number, "context": context},
         )
+        return {"status": "success", "detail": "sku selection card posted"}
     except Exception as exc:
         app.logger.exception("[sku] Failed to post SKU card for %s: %s", contract_number, exc)
         try:
             post_sku_card(build_hrc_sku_validation_failed_card("Could not post HRC SKU card. Detailed error is available in Cloud Run logs", contract_number))
         except Exception:
             pass
+        return {"status": "error", "detail": str(exc)}
 
 
 def _run_sku_creation(contract_number: str, line_data: dict) -> None:

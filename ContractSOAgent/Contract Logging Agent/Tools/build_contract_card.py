@@ -50,6 +50,10 @@ def prepare_contract_details(ticket: dict) -> dict:
     )
     po_number = get_cf("PO Number")
     po_date = normalise_date(get_cf("PO Date"))
+    customer_requested_delivery_date = normalise_date(
+        get_cf("Customer Requested Delivery Date")
+        or get_cf("Customer Requested Date")
+    )
 
     return {
         "ticket_id": ticket.get("key", ""),
@@ -64,6 +68,7 @@ def prepare_contract_details(ticket: dict) -> dict:
         "po_number": po_number,
         "po_date": po_date,
         "contract_end_date": calc_end_date(po_date, days=90),
+        "customer_requested_delivery_date": customer_requested_delivery_date,
     }
 
 

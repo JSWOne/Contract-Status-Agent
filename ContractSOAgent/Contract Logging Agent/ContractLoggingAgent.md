@@ -1869,3 +1869,24 @@ Supply Plant / Depot before save: Vijayanagar Works
 ```
 
 No additional Playwright Inspector script was needed for this field.
+
+### HRC Confirm Routing and Requested Date Fix - 2026-05-14
+
+Issue:
+
+- Clicking **Confirm SKU Details** could route back through the SKU lookup path and post the same second card again.
+- The HRC details card could show a default/fallback customer requested date such as `12-Aug-2026` instead of Jira's `Customer Requested Delivery Date`.
+
+Fix:
+
+- `/sku-select-confirm` now detects a submitted HRC details payload and routes it to the SKU creation handler.
+- `/sku-details-confirm` and routed details confirmations share the same handler, so the Salesforce line creation worker starts after the second card is confirmed.
+- Jira context enrichment now includes `Customer Requested Delivery Date` and `Contract End Date`, not only plant and party codes.
+- HRC detail cards now prefer the Jira/customer context date over HRC Excel/default dates.
+
+Expected result:
+
+```text
+Confirm SKU Details -> thanks/progress Teams card -> Salesforce contract line creation -> contract line item card
+Customer Requested Date -> Jira Customer Requested Delivery Date, for example 14/05/2026 for May 14, 2026
+```

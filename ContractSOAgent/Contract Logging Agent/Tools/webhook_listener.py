@@ -10,7 +10,7 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -309,6 +309,10 @@ def sku_confirm():
 @app.post("/sku-select-confirm")
 def sku_select_confirm():
     data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
+    if _is_hrc_details_payload(data):
+        app.logger.info("[hrc-sku] Details payload received on /sku-select-confirm; routing to details handler")
+        return _handle_sku_details_confirm_payload(data)
+
     contract_number = (data.get("contract_number") or "").strip()
     material = (data.get("material") or "").strip()
     description = (data.get("description") or data.get("sku_description") or "").strip()
@@ -329,7 +333,7 @@ def sku_select_confirm():
         post_sku_card(build_hrc_sku_validation_failed_card(message, contract_number))
         return jsonify({"status": "validation_error", "missing_fields": missing}), 400
 
-    context = _context_from_memory_or_payload(contract_number, data)
+    context = _enrich_context_from_jira(_context_from_memory_or_payload(contract_number, data))
     selection = {"material": material, "description": description, "qty": qty}
     app.logger.info(
         "[hrc-sku] %s: selected material=%s description=%s qty=%s",
@@ -356,7 +360,7 @@ def sku_select_confirm():
             post_sku_card(build_hrc_sku_row_choice_card(context, selection, rows, request_id))
             return jsonify({"status": "row_choice_required", "request_id": request_id, "rows": len(rows)})
 
-        details = _details_from_row(rows[0], material) if rows else _manual_hrc_details(selection)
+        details = _details_from_row(rows[0], material, context) if rows else _manual_hrc_details(selection, context)
         post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))
         return jsonify({"status": "details_card_posted", "request_id": request_id, "rows": len(rows)})
     except Exception as exc:
@@ -382,7 +386,8 @@ def sku_row_confirm():
 
     context = pending.get("context", {})
     selection = pending.get("selection", {})
-    details = _details_from_row(row, selection.get("material", ""))
+    context = _enrich_context_from_jira(context)
+    details = _details_from_row(row, selection.get("material", ""), context)
     post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))
     return jsonify({"status": "details_card_posted", "request_id": request_id, "row_index": row_index})
 
@@ -390,6 +395,10 @@ def sku_row_confirm():
 @app.post("/sku-details-confirm")
 def sku_details_confirm():
     data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
+    return _handle_sku_details_confirm_payload(data)
+
+
+def _handle_sku_details_confirm_payload(data: dict):
     contract_number = (data.get("contract_number") or "").strip()
     if not contract_number:
         return jsonify({"status": "error", "detail": "missing contract_number"}), 400
@@ -423,6 +432,25 @@ def sku_details_confirm():
 
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({"status": "success", "contract_number": contract_number})
+
+
+def _is_hrc_details_payload(data: dict) -> bool:
+    if (data.get("stage") or "").strip() == "hrc_sku_details":
+        return True
+    detail_keys = {
+        "customer_order_category",
+        "eq_specif_grp",
+        "eq_specifi",
+        "eq_sub_grade",
+        "end_appn",
+        "rh_req",
+        "cust_req_date",
+        "width",
+        "thickness",
+        "length",
+        "edge_con",
+    }
+    return any(str(data.get(key) or "").strip() for key in detail_keys)
 
 
 def _post_sku_confirmation_card(contract_number: str) -> dict:
@@ -497,10 +525,14 @@ def _run_sku_creation(contract_number: str, line_data: dict, details: dict | Non
 
 
 def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) -> dict:
-    context = find_contract_context(contract_number) or {}
+    context = _enrich_context_from_jira(find_contract_context(contract_number) or {"contract_number": contract_number})
     material = (details.get("material") or "").strip().upper()
     plant_code = details.get("plant_code") or context.get("ship_plant_code", "")
     plant_code = _normalise_plant_for_salesforce(plant_code)
+    customer_requested_date = (
+        details.get("cust_req_date")
+        or _customer_requested_date_from_context(context)
+    )
 
     line_data = {
         "division": "HRC",
@@ -512,10 +544,7 @@ def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) ->
         "eq_sub_grade": details.get("eq_sub_grade", ""),
         "end_appn": details.get("end_appn", ""),
         "order_qty": details.get("qty", ""),
-        "cust_req_date": _normalise_customer_requested_date(
-            details.get("cust_req_date", ""),
-            context.get("contract_end_date", ""),
-        ),
+        "cust_req_date": _normalise_customer_requested_date(customer_requested_date, context.get("contract_end_date", "")),
         "width": details.get("width", ""),
         "thickness": details.get("thickness", ""),
         "length": details.get("length", ""),
@@ -579,17 +608,29 @@ def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:
         "sold_to_party": "bp_code",
         "ship_to_party": "sp_code",
         "ship_plant_code": "ship_plant_code",
+        "customer_requested_delivery_date": "customer_requested_delivery_date",
+        "contract_end_date": "contract_end_date",
     }
     for target, source in fallback_keys.items():
         if not context.get(target) and data.get(source):
             context[target] = str(data.get(source)).strip()
+    if not context.get("customer_requested_delivery_date") and data.get("cust_req_date"):
+        context["customer_requested_delivery_date"] = str(data.get("cust_req_date")).strip()
     context.setdefault("contract_number", contract_number)
     context.setdefault("division", "HRC")
     return context
 
 
 def _enrich_context_from_jira(context: dict) -> dict:
-    if context.get("ship_plant_code"):
+    needed_keys = (
+        "ship_plant_code",
+        "sold_to_party",
+        "ship_to_party",
+        "division",
+        "customer_requested_delivery_date",
+        "contract_end_date",
+    )
+    if all(context.get(key) for key in needed_keys):
         return context
     ticket_id = (context.get("ticket_id") or "").strip()
     if not ticket_id:
@@ -599,7 +640,7 @@ def _enrich_context_from_jira(context: dict) -> dict:
         if not ticket:
             return context
         details = prepare_contract_details(ticket)
-        for key in ("ship_plant_code", "sold_to_party", "ship_to_party", "division"):
+        for key in needed_keys:
             if not context.get(key) and details.get(key):
                 context[key] = str(details.get(key)).strip()
     except Exception as exc:
@@ -607,7 +648,19 @@ def _enrich_context_from_jira(context: dict) -> dict:
     return context
 
 
-def _manual_hrc_details(selection: dict) -> dict:
+def _customer_requested_date_from_context(context: dict | None) -> str:
+    context = context or {}
+    value = (
+        context.get("customer_requested_delivery_date")
+        or context.get("cust_req_date")
+        or context.get("Customer Requested Delivery Date")
+        or context.get("Customer Requested Date")
+    )
+    normalised = _normalise_customer_requested_date(value or "", context.get("contract_end_date", ""))
+    return normalised or datetime.now(timezone.utc).strftime("%d/%m/%Y")
+
+
+def _manual_hrc_details(selection: dict, context: dict | None = None) -> dict:
     return {
         "customer_order_category": "",
         "eq_specif_grp": "",
@@ -615,8 +668,8 @@ def _manual_hrc_details(selection: dict) -> dict:
         "eq_sub_grade": "",
         "end_appn": "",
         "rh_req": "N",
-        "plant_code": "",
-        "cust_req_date": (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%d-%b-%Y"),
+        "plant_code": (context or {}).get("ship_plant_code", ""),
+        "cust_req_date": _customer_requested_date_from_context(context),
         "width": "",
         "thickness": "",
         "length": "",
@@ -627,8 +680,9 @@ def _manual_hrc_details(selection: dict) -> dict:
     }
 
 
-def _details_from_row(row: dict, material: str) -> dict:
-    details = _manual_hrc_details({"material": material})
+def _details_from_row(row: dict, material: str, context: dict | None = None) -> dict:
+    details = _manual_hrc_details({"material": material}, context)
+    context_customer_requested_date = _customer_requested_date_from_context(context)
     details.update(
         {
             "customer_order_category": _row_value(row, "CUST ORDER", "customer_order_category", "Cust.Grp", "Cust Grp"),
@@ -638,7 +692,8 @@ def _details_from_row(row: dict, material: str) -> dict:
             "end_appn": _row_value(row, "END_APPN", "END APPN", "end_appn"),
             "rh_req": _row_value(row, "RH REQ", "rh_req") or "N",
             "plant_code": _row_value(row, "SHIP PLANT", "ship_plant", "ship_plant_code", "plant_code", "Plant Code"),
-            "cust_req_date": _row_value(row, "Customer Requested Date", "CUST REQ DATE", "cust_req_date")
+            "cust_req_date": context_customer_requested_date
+            or _row_value(row, "Customer Requested Date", "CUST REQ DATE", "cust_req_date")
             or details["cust_req_date"],
             "width": _row_value(row, "WIDTH", "width"),
             "thickness": _row_value(row, "THICKNESS", "thickness"),

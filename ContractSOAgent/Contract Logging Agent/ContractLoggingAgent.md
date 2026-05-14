@@ -1942,3 +1942,31 @@ Fix:
 - If Salesforce rejects Save, it extracts visible toast/form validation text and raises that exact message.
 - If the modal remains open without a visible error, it reports which required fields still appear blank/invalid.
 - Teams failure cards now show a longer error message so the actual Salesforce reason is visible.
+
+### Customer Requested Date Salesforce Rule - 2026-05-14
+
+Local visible test revealed Salesforce validation on the HRC contract line form:
+
+```text
+Customer Requested Date can not be in past or it can not be todays date..!
+```
+
+The Jira value for O360-15812 was `May 14, 2026`, which is today's date. Salesforce requires a future date for the line item, so the line was not created.
+
+Fix:
+
+- The Teams card can still show Jira's requested delivery date for audit.
+- The Salesforce line submission now adjusts a today/past Customer Requested Date to the next valid date before saving.
+- Existing contract-end-date clamping still remains in place.
+
+### Contract Line Capture Fallback - 2026-05-14
+
+Observation:
+
+- Salesforce created the HRC contract line successfully, for example `00176235_10`.
+- The automation still posted a failure because it did not capture the line name from the post-save page.
+
+Fix:
+
+- The line helper now carries the contract number into the save/capture step.
+- If the line name is not visible in the page heading/body immediately after Save, it uses Salesforce global search for the contract number and selects the newest `Contract Line` style result, such as `00176235_10`.

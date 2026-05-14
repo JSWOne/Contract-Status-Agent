@@ -44,7 +44,7 @@ def salesforce_add_contract_line(contract_number: str, line_data: dict) -> str:
             _login(page)
             _search_and_open_contract(page, contract_number)
             _click_new_contract_line(page)
-            return _fill_contract_line(page, line_data)
+            return _fill_contract_line(page, line_data, contract_number)
         finally:
             browser.close()
     return ""
@@ -64,7 +64,7 @@ def salesforce_add_contract_line_for_training(
             _login(page)
             _search_and_open_contract(page, contract_number)
             _click_new_contract_line(page)
-            line_name = _fill_contract_line(page, line_data) or ""
+            line_name = _fill_contract_line(page, line_data, contract_number) or ""
             print(f"Contract line result: {line_name or '[not captured]'}")
             if pause_seconds > 0:
                 print(f"Browser will stay open for {pause_seconds} seconds for verification.")
@@ -334,7 +334,7 @@ def _click_new_contract_line(page) -> None:
 # Step 4 — Fill the contract line form
 # ---------------------------------------------------------------------------
 
-def _fill_contract_line(page, data: dict) -> None:
+def _fill_contract_line(page, data: dict, contract_number: str = "") -> str:
     log.info("--- Filling contract line form ---")
 
     # 1. Product Name — click input, dropdown appears automatically, select matching option
@@ -432,7 +432,7 @@ def _fill_contract_line(page, data: dict) -> None:
     _screenshot(page, "18_before_save", full_page=True)
     log.info("All fields filled — ready to save")
 
-    return _save(page)
+    return _save(page, contract_number)
 
 
 # ---------------------------------------------------------------------------
@@ -932,7 +932,7 @@ def _fill_date_by_label(page, label: str, value: str) -> None:
         log.warning("  could not fill date '%s': %s", label, e)
 
 
-def _save(page) -> str:
+def _save(page, contract_number: str = "") -> str:
     """Click Save, wait for the detail page, then return the contract line name (e.g. '00170850_20')."""
     log.info("Clicking Save")
     try:
@@ -985,6 +985,9 @@ def _save(page) -> str:
         except Exception:
             pass
 
+    if not line_name and contract_number:
+        line_name = _find_latest_contract_line_via_search(page, contract_number)
+
     if line_name:
         log.info("Contract line name: %s", line_name)
     else:
@@ -992,6 +995,33 @@ def _save(page) -> str:
         log.warning("Could not read contract line name from page. Diagnostics: %s", diagnostic)
         raise RuntimeError(f"Contract line name was not captured after Save. {diagnostic}")
     return line_name
+
+
+def _find_latest_contract_line_via_search(page, contract_number: str) -> str:
+    """If Salesforce redirects to contract detail after create, use global search suggestions to find the newest line."""
+    try:
+        log.info("Trying global search fallback for latest Contract Line under %s", contract_number)
+        search_input = page.locator('input[placeholder="Search..."]').first
+        search_input.scroll_into_view_if_needed(timeout=3_000)
+        search_input.click(timeout=5_000)
+        page.keyboard.press("Control+A")
+        search_input.fill(contract_number)
+        page.wait_for_timeout(2_500)
+        _screenshot(page, "20_line_search_fallback")
+        text = page.inner_text("body", timeout=3_000)
+        candidates = []
+        for line_name in re.findall(rf'\b({re.escape(contract_number)}_\d+)\b', text):
+            if re.search(rf'{re.escape(line_name)}[\s\S]{{0,120}}Contract Line', text, re.IGNORECASE):
+                candidates.append(line_name)
+        if not candidates:
+            candidates = re.findall(rf'\b({re.escape(contract_number)}_\d+)\b', text)
+        if candidates:
+            latest = max(set(candidates), key=lambda x: int(x.split("_")[1]))
+            log.info("Latest Contract Line from search fallback: %s", latest)
+            return latest
+    except Exception as exc:
+        log.warning("Contract line search fallback failed: %s", exc)
+    return ""
 
 
 def _extract_save_error(page) -> str:

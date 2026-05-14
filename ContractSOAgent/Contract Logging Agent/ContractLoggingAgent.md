@@ -1670,3 +1670,202 @@ Qty
 ```
 
 This is a progress acknowledgement for the upcoming Salesforce line-item creation phase. The Salesforce line item is not yet created by this message until the Salesforce automation is wired into the final confirm route.
+
+### Local Salesforce HRC Line Training Started - 2026-05-14
+
+Added a safe local smoke/training mode to:
+
+```text
+ContractSOAgent/Contract Logging Agent/Tools/salesforce_add_contract_line.py
+```
+
+Purpose:
+
+- Open JSW Steel Salesforce in a visible local browser.
+- Log in using local `.env` credentials.
+- Search and open contract `00175457`.
+- Avoid clicking `New Contract Line` or saving anything during the smoke test.
+
+Verified:
+
+```text
+Salesforce login successful
+Contract 00175457 opened successfully
+No Salesforce line item was created during this test
+```
+
+Resolution handling:
+
+- The local Salesforce helper now forces a stable desktop layout:
+
+```text
+Browser window: 1920 x 1080
+Viewport: 1920 x 1080
+Device scale factor: 1
+```
+
+- This is required so Salesforce buttons do not move into responsive overflow menus while Playwright is searching/clicking fields.
+
+Next HRC-only work:
+
+- Use the visible Salesforce page to train/verify the HRC `New Contract Line` layout.
+- Map confirmed second-card fields to the Salesforce HRC line form.
+- Run a controlled local HRC line creation test.
+- Deploy only after local line creation is confirmed.
+
+### Local HRC Contract Line Creation Test - 2026-05-14
+
+Local visible Playwright test completed for HRC contract line creation.
+
+Contract:
+
+```text
+00175457
+```
+
+HRC line test data:
+
+```text
+Product Name: HR Sheet & Plate - (S_HRCTLF)
+SKU / Part Number: 10X2000X6100.-P1-2062_2011-E350BR
+Qty: 15
+Customer Order Category: STD
+Eq. Specification Group: BIS
+Eq. Specification: 2062_2011
+Eq. Sub Specification: E350BR
+End Application: STRL_HT
+Customer Requested Date: 06/08/2026
+Width: 2000.000
+Thickness: 10.000
+Length: 6100.000
+Edge Condition: ME
+S Plant: 1001 - Vijayanagar Works
+```
+
+Important local fixes from testing:
+
+- Salesforce product dropdown value for `S_HRCTLF` is:
+
+```text
+HR Sheet & Plate - (S_HRCTLF)
+```
+
+- The original card value `10-Aug-2026` was rejected because contract `00175457` ends on `06/08/2026`. The local test used `06/08/2026` to stay inside the contract period.
+- `_save()` now checks for Salesforce validation errors before returning a contract line number, so it does not accidentally read an existing line number from the background page.
+- HRC CTL line creation now fills `Length` in addition to width and thickness.
+
+Verified result:
+
+```text
+Salesforce toast: Line is created.
+Local script returned contract_line_number: 00175457_10
+```
+
+Line detail verification:
+
+```text
+Contract Line: 00175457_10
+Product Form: HR Sheet & Plate
+Material Name: S_HRCTLF
+SAP SKU: HRCTL_2062_E350BR_STRL_HT_12.00_2000_12000
+Order Quantity: 15.000
+Eq. Specification Group: BIS
+Eq. Specification: 2062_2011
+Eq. Sub Grade: E350BR
+End Application: STRL_HT
+S Plant: Vijayanagar Works
+Supply Plant / Depot: Vijayanagar Works
+Ship Plant Code: 1001
+Width: 2000.000
+Thickness: 12.000
+Length: 12000.00
+Edge Condition: ME
+```
+
+Note:
+
+- Salesforce accepted the line and generated its own SAP SKU/detail values after save.
+- The local script currently returns the contract line number to the terminal. Posting that number back to Teams is the next wiring step.
+
+Pending before deployment:
+
+- Wire `/sku-details-confirm` to call the local Salesforce line helper.
+- Post the returned `contract_line_number` back to Teams.
+- Decide how to handle invalid customer requested dates from the card when they are after the contract end date.
+
+### Local Teams Endpoint Wiring Test - 2026-05-14
+
+Wired `/sku-details-confirm` to start Salesforce HRC line creation after the second card is confirmed.
+
+Flow now:
+
+1. User clicks **Confirm SKU Details** on the second HRC card.
+2. `/sku-details-confirm` stores the confirmed details.
+3. Bot posts the progress card:
+
+```text
+Thanks for confirming. I am adding the SKU in contract <contract_number>. I will share the Contract Line Item shortly.
+```
+
+4. Background worker calls the Salesforce HRC line helper.
+5. Bot posts final Teams card with the returned contract line item.
+
+Local endpoint test:
+
+```text
+Endpoint: POST /sku-details-confirm
+Contract: 00175457
+Result: Created SKU line 00175457_20
+Teams post path: post_sku_card completed before memory success was written
+```
+
+Important selector fix:
+
+- Salesforce search can show one `Contract` row and multiple `Contract Line` rows for the same contract number.
+- The script now selects only the row whose object label is exactly:
+
+```text
+Contract
+```
+
+- It explicitly avoids rows labeled:
+
+```text
+Contract Line
+```
+
+Pending before deployment:
+
+- Commit the new Salesforce line helper because it is currently a new local file.
+- Push and deploy the Contract Logging service.
+- Run one production Teams test after deployment.
+
+### Supply Plant / Depot Fix - 2026-05-14
+
+Issue:
+
+- The HRC Salesforce line script selected `S Plant` in the Plant Description section.
+- It did not explicitly select the `Supply Plant / Depot` lookup in General Fields before saving.
+
+Fix:
+
+- Added an explicit `Supply Plant / Depot` lookup step after `Order Quantity`.
+- The script now:
+
+```text
+1. Finds the Supply Plant / Depot input by label.
+2. Types the plant code, for example 1001.
+3. Uses the lookup result path if direct suggestion is not available.
+4. Selects the plant row by code/name, for example Vijayanagar Works.
+5. Continues to Customer Requested Date and remaining HRC fields.
+```
+
+Verified local run:
+
+```text
+Contract: 00175457
+Created line: 00175457_30
+Supply Plant / Depot before save: Vijayanagar Works
+```
+
+No additional Playwright Inspector script was needed for this field.

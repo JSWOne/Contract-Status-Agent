@@ -134,6 +134,7 @@ def _merge_contract_context(target: dict[str, str], source: dict[str, Any]) -> N
         "payer": ("payer",),
         "distribution_channel": ("distribution_channel",),
         "contract_type": ("contract_type",),
+        "contract_end_date": ("contract_end_date", "Contract End Date"),
     }
     for target_key, keys in aliases.items():
         if target.get(target_key):

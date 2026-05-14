@@ -10,7 +10,7 @@ DIVISION_PRODUCTS = {
     "CRCA":         ["CRCA Coil - (S_CRCACF)", "CRCA Sheet - (S_CRCASF)"],
     "GI":           ["GI Coil - (S_GICF)", "GI Sheet - (S_GISF)", "HR GI Coil - (S_HRGICF)", "ZM Coil - (S_ZMCF)"],
     "GL":           ["GL Coil - (S_GLCF)"],
-    "HRC":          ["HR Coil - (S_HRCF)", "HR CTL - (S_HRCTLF)"],
+    "HRC":          ["HR Coil - (S_HRCF)", "HR Sheet & Plate - (S_HRCTLF)"],
     "HRPO":         ["HRPO Coil - (S_HRPKLCF)", "HRPO Sheet - (S_HRPKLSF)"],
     "PPGI":         ["PPGI Coil - (S_PPGICF)", "PPGI Sheet - (S_PPGISF)"],
     "PPGL":         ["PPGL Coil - (S_PPGLCF)", "PPGL Sheet - (S_PPGLSF)"],
@@ -372,6 +372,37 @@ def build_sku_failure_card(contract_number: str, error: str) -> dict:
                 "facts": [
                     {"title": "Contract Number", "value": contract_number},
                     {"title": "Error", "value": (error or "-")[:200]},
+                ],
+            },
+        ],
+    }
+
+
+def build_hrc_sku_line_created_card(contract_number: str, line_name: str, details: dict) -> dict:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.2",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": (
+                    f"SKU added successfully in contract {contract_number}. "
+                    "Here is the Contract Line Item."
+                ),
+                "weight": "Bolder",
+                "size": "Medium",
+                "color": "Good",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Contract Number", "value": contract_number or "-"},
+                    {"title": "Contract Line Item", "value": line_name or "-"},
+                    {"title": "Material", "value": details.get("material") or "-"},
+                    {"title": "SKU", "value": details.get("description") or "-"},
+                    {"title": "Qty", "value": details.get("qty") or "-"},
                 ],
             },
         ],

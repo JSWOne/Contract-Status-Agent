@@ -24,6 +24,7 @@ from build_contract_card import (
     build_confirmation_card,
     build_hrc_sku_confirmed_card,
     build_hrc_sku_details_card,
+    build_hrc_sku_line_created_card,
     build_hrc_sku_row_choice_card,
     build_hrc_sku_selection_card,
     build_hrc_sku_validation_failed_card,
@@ -58,6 +59,15 @@ MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
 GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
+
+HRC_SALESFORCE_PRODUCT_BY_MATERIAL = {
+    "S_HRCF": "HR Coil - (S_HRCF)",
+    "S_HRCTLF": "HR Sheet & Plate - (S_HRCTLF)",
+}
+
+PLANT_NAME_BY_CODE = {
+    "1001": "1001 - Vijayanagar Works",
+}
 
 _MEMORY_DEFAULT = {
     "skill": "Contract Logging Agent",
@@ -404,6 +414,14 @@ def sku_details_confirm():
         {"contract_number": contract_number, "details": details},
     )
     post_sku_card(build_hrc_sku_confirmed_card(contract_number, details))
+
+    line_data = _hrc_details_to_salesforce_line_data(contract_number, details)
+
+    def _bg():
+        with app.app_context():
+            _run_sku_creation(contract_number, line_data, details=details, hrc=True)
+
+    threading.Thread(target=_bg, daemon=True).start()
     return jsonify({"status": "success", "contract_number": contract_number})
 
 
@@ -449,7 +467,7 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
-def _run_sku_creation(contract_number: str, line_data: dict) -> None:
+def _run_sku_creation(contract_number: str, line_data: dict, details: dict | None = None, hrc: bool = False) -> None:
     try:
         from salesforce_add_contract_line import salesforce_add_contract_line
 
@@ -458,7 +476,10 @@ def _run_sku_creation(contract_number: str, line_data: dict) -> None:
         if not line_name:
             raise RuntimeError("Contract line name was not captured after Save")
         app.logger.info("[sku] Line created: %s", line_name)
-        post_sku_card(build_sku_success_card(contract_number, line_name))
+        if hrc:
+            post_sku_card(build_hrc_sku_line_created_card(contract_number, line_name, details or line_data))
+        else:
+            post_sku_card(build_sku_success_card(contract_number, line_name))
         safe_write_memory_step(
             "create_sku_line",
             "success",
@@ -473,6 +494,81 @@ def _run_sku_creation(contract_number: str, line_data: dict) -> None:
         except Exception as notify_exc:
             app.logger.exception("[sku] Could not post failure card: %s", notify_exc)
         record_contract_error(contract_number, line_data, str(exc))
+
+
+def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) -> dict:
+    context = find_contract_context(contract_number) or {}
+    material = (details.get("material") or "").strip().upper()
+    plant_code = details.get("plant_code") or context.get("ship_plant_code", "")
+    plant_code = _normalise_plant_for_salesforce(plant_code)
+
+    line_data = {
+        "division": "HRC",
+        "product_name": HRC_SALESFORCE_PRODUCT_BY_MATERIAL.get(material, details.get("product_name", "")),
+        "customer_order_category": details.get("customer_order_category", ""),
+        "sku_description": details.get("description", ""),
+        "eq_specif_grp": details.get("eq_specif_grp", ""),
+        "eq_specifi": details.get("eq_specifi", ""),
+        "eq_sub_grade": details.get("eq_sub_grade", ""),
+        "end_appn": details.get("end_appn", ""),
+        "order_qty": details.get("qty", ""),
+        "cust_req_date": _normalise_customer_requested_date(
+            details.get("cust_req_date", ""),
+            context.get("contract_end_date", ""),
+        ),
+        "width": details.get("width", ""),
+        "thickness": details.get("thickness", ""),
+        "length": details.get("length", ""),
+        "edge_con": details.get("edge_con", ""),
+        "plant_code": plant_code,
+    }
+    return line_data
+
+
+def _normalise_plant_for_salesforce(value: str) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"\d+", text)
+    if match:
+        code = match.group(0)
+        return PLANT_NAME_BY_CODE.get(code, text)
+    return text
+
+
+def _normalise_customer_requested_date(value: str, contract_end_date: str = "") -> str:
+    requested = _parse_date(value)
+    contract_end = _parse_date(contract_end_date)
+    if requested and contract_end and requested > contract_end:
+        app.logger.info(
+            "[hrc-sku] Customer Requested Date %s is after Contract End Date %s; using contract end date",
+            value,
+            contract_end_date,
+        )
+        requested = contract_end
+    if requested:
+        return requested.strftime("%d/%m/%Y")
+    return str(value or "").strip()
+
+
+def _parse_date(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in (
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d-%b-%Y",
+        "%d %b %Y",
+        "%d-%B-%Y",
+        "%d %B %Y",
+        "%Y-%m-%d",
+        "%b %d, %Y",
+        "%B %d, %Y",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:

@@ -1650,3 +1650,23 @@ This field is included in the submitted SKU details payload as:
 ```text
 plant_code
 ```
+
+### Final Confirmation Progress Message - 2026-05-14
+
+After the user clicks **Confirm SKU Details** on the second HRC card, the bot now posts a progress message instead of only saying the details were saved.
+
+Message:
+
+```text
+Thanks for confirming. I am adding the SKU in contract <contract_number>. I will share the Contract Line Item shortly.
+```
+
+The card still includes the selected SKU facts:
+
+```text
+Material
+SKU
+Qty
+```
+
+This is a progress acknowledgement for the upcoming Salesforce line-item creation phase. The Salesforce line item is not yet created by this message until the Salesforce automation is wired into the final confirm route.

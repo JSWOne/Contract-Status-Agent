@@ -541,7 +541,10 @@ def build_hrc_sku_confirmed_card(contract_number: str, details: dict) -> dict:
         "body": [
             {
                 "type": "TextBlock",
-                "text": f"SKU details confirmed successfully for contract {contract_number}.",
+                "text": (
+                    f"Thanks for confirming. I am adding the SKU in contract {contract_number}. "
+                    "I will share the Contract Line Item shortly."
+                ),
                 "weight": "Bolder",
                 "size": "Medium",
                 "color": "Good",

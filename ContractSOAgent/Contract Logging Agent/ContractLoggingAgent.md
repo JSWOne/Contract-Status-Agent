@@ -1883,6 +1883,7 @@ Fix:
 - `/sku-details-confirm` and routed details confirmations share the same handler, so the Salesforce line creation worker starts after the second card is confirmed.
 - Jira context enrichment now includes `Customer Requested Delivery Date` and `Contract End Date`, not only plant and party codes.
 - HRC detail cards now prefer the Jira/customer context date over HRC Excel/default dates.
+- Salesforce HRC line submission also prefers the Jira/customer context date, so an older already-posted card with a stale date does not override Jira.
 
 Expected result:
 

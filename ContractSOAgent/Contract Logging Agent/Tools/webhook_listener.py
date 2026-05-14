@@ -529,10 +529,7 @@ def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) ->
     material = (details.get("material") or "").strip().upper()
     plant_code = details.get("plant_code") or context.get("ship_plant_code", "")
     plant_code = _normalise_plant_for_salesforce(plant_code)
-    customer_requested_date = (
-        details.get("cust_req_date")
-        or _customer_requested_date_from_context(context)
-    )
+    customer_requested_date = _customer_requested_date_from_context(context) or details.get("cust_req_date", "")
 
     line_data = {
         "division": "HRC",

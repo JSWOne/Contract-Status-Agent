@@ -360,9 +360,9 @@ def _fill_contract_line(page, data: dict) -> None:
         page.wait_for_timeout(3_000)
     _screenshot(page, "07_cust_order_cat")
 
-    # 3. Part Number (= SKU Description) — search lookup with magnifier icon
-    if not _fill_part_number(page, data.get("sku_description", "")):
-        raise RuntimeError("Part Number / SKU Description lookup was not selected")
+    # 3. Part Number is optional for this HRC flow. Keep the earlier behavior:
+    # try it only when Salesforce allows it, but do not block line creation.
+    _fill_part_number(page, data.get("sku_description", ""))
     page.wait_for_timeout(2_000)
     _screenshot(page, "08_part_number")
 

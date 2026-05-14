@@ -1918,7 +1918,8 @@ Contract line name was not captured after Save
 Part Number search button not found via JS
 ```
 
-Fix:
+Follow-up:
 
-- The Salesforce HRC line script now finds the Part Number / SKU Description lookup search button by proximity to the Part Number input instead of relying on one older DOM shape.
-- If Part Number cannot be selected, the script now fails immediately with a clear error instead of continuing to Save and later failing with a generic line-number capture error.
+- Part Number is not a user-confirmed mandatory field for the HRC flow.
+- The script no longer blocks contract line creation if Part Number cannot be selected.
+- The flow remains focused on the mandatory/known Salesforce fields already used earlier.

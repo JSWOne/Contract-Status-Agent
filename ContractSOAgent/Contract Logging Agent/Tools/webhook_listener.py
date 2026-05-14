@@ -519,6 +519,7 @@ def _manual_hrc_details(selection: dict) -> dict:
         "eq_sub_grade": "",
         "end_appn": "",
         "rh_req": "N",
+        "plant_code": "",
         "cust_req_date": (datetime.now(timezone.utc) + timedelta(days=90)).strftime("%d-%b-%Y"),
         "width": "",
         "thickness": "",
@@ -540,6 +541,7 @@ def _details_from_row(row: dict, material: str) -> dict:
             "eq_sub_grade": _row_value(row, "EqSub_Grade", "EQ SUB GRADE", "eq_sub_grade"),
             "end_appn": _row_value(row, "END_APPN", "END APPN", "end_appn"),
             "rh_req": _row_value(row, "RH REQ", "rh_req") or "N",
+            "plant_code": _row_value(row, "SHIP PLANT", "ship_plant", "ship_plant_code", "plant_code", "Plant Code"),
             "cust_req_date": _row_value(row, "Customer Requested Date", "CUST REQ DATE", "cust_req_date")
             or details["cust_req_date"],
             "width": _row_value(row, "WIDTH", "width"),

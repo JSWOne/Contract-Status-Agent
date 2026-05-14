@@ -1154,3 +1154,499 @@ Expected HRC Master Lookup API behavior for `get_sku_choices`:
 ```
 
 If the lookup API returns no JSON or fails, the card still posts using fallback material choices and manual description entry.
+
+---
+
+## 25. Latest HRC SKU Deployment State - 2026-05-12
+
+Final update from the latest Teams/card testing session:
+
+| Item | Value |
+|------|-------|
+| Latest deployed commit | `b274d5b fix: map jira plant name to hrc ship plant` |
+| Latest Cloud Run revision | `jsw-contract-logging-agent-00048-lfn` |
+| Service health | `/health` returned `OK` |
+| CPU throttling | `false` |
+| Test contract | `00175457` |
+| Test ticket | `O360-15812` |
+| Test result | SKU selection card posted successfully |
+
+### What Was Fixed
+
+The HRC SKU card needed to show and use all master-match parameters:
+
+```text
+B P Code
+S P Code
+SHIP Plant Code
+```
+
+The Jira ticket did not have a field literally named `Ship Plant Code`. For the tested HRC ticket, the plant value came from:
+
+```text
+Plant Name: 1001 - Vijayanagar Works
+```
+
+The bot now extracts:
+
+```text
+ship_plant_code = 1001
+```
+
+from Jira `Plant Name`.
+
+### Current Card Behavior
+
+The first HRC SKU card now displays:
+
+| Field | Example from `00175457` |
+|-------|--------------------------|
+| Contract Number | `00175457` |
+| Division | `HRC` |
+| Jira Ticket | `O360-15812` |
+| B P Code | `0040046287` |
+| S P Code | `0040046287` |
+| SHIP Plant Code | `1001` |
+
+The bot sends the lookup request with:
+
+```json
+{
+  "action": "get_sku_choices",
+  "division": "HRC",
+  "bp_code": "0040046287",
+  "sp_code": "0040046287",
+  "ship_plant_code": "1001",
+  "ship_plant": "1001",
+  "plant_code": "1001"
+}
+```
+
+`ship_plant`, `plant_code`, and `ship_plant_code` are all sent for Power Automate compatibility.
+
+### Description Dropdown Requirement
+
+The `SKU / Description` field becomes a dropdown when the HRC Master Lookup API returns descriptions in any of these response keys:
+
+```text
+skus
+descriptions
+rows
+```
+
+Supported response examples:
+
+```json
+{
+  "status": "success",
+  "materials": ["S_HRCF"],
+  "skus": [
+    {
+      "material": "S_HRCF",
+      "description": "1.6X1060-P1-10748_2004-GR2"
+    }
+  ]
+}
+```
+
+or:
+
+```json
+{
+  "status": "success",
+  "rows": [
+    {
+      "MATERIAL": "S_HRCF",
+      "DESCRIPTION": "1.6X1060-P1-10748_2004-GR2",
+      "SHIP PLANT": "1001"
+    }
+  ]
+}
+```
+
+If Power Automate returns empty/non-JSON/`502`, the card still posts, but `SKU / Description` remains a manual text field.
+
+### Verified Context
+
+GCS memory verification after the latest signed `/sku-webhook` test:
+
+```json
+{
+  "contract_number": "00175457",
+  "ticket_id": "O360-15812",
+  "division": "HRC",
+  "distribution_channel": "OEM",
+  "contract_type": "ZCQT",
+  "sold_to_party": "0040046287",
+  "ship_to_party": "0040046287",
+  "payer": "40102336",
+  "ship_plant_code": "1001"
+}
+```
+
+Verification timestamp:
+
+```text
+2026-05-12T12:02:41Z
+```
+
+### Remaining Dependency
+
+The bot side is ready for the description dropdown. The remaining dependency is the Power Automate `HRC Master Lookup API` response:
+
+- It must filter the HRC Excel file by `bp_code`, `sp_code`, and `ship_plant_code`.
+- It must return JSON with matched description values.
+- Until it returns matching descriptions, the bot will keep posting the card with fallback/manual SKU description entry.
+
+---
+
+## 26. HRC SKU Dropdown and Second Card Progress - 2026-05-12
+
+Latest Teams/Power Automate validation completed after the HRC Master Lookup API changes.
+
+### First SKU Card - Working
+
+The HRC first SKU card now posts and shows the required matching context:
+
+| Field | Verified Value |
+|-------|----------------|
+| Contract Number | `00175457` |
+| Jira Ticket | `O360-15812` |
+| Division | `HRC` |
+| B P Code | `0040046287` |
+| S P Code | `0040046287` |
+| SHIP Plant Code | `1001` |
+
+Power Automate `get_sku_choices` was fixed by moving multi-condition Excel filtering out of `List rows present in a table` and into `Filter array`.
+
+Direct lookup test for:
+
+```json
+{
+  "action": "get_sku_choices",
+  "division": "HRC",
+  "bp_code": "0040046287",
+  "sp_code": "0040046287",
+  "ship_plant_code": "1001",
+  "ship_plant": "1001",
+  "plant_code": "1001"
+}
+```
+
+returned:
+
+```text
+200 OK
+```
+
+with 5 SKU descriptions, including:
+
+```text
+10X2000X12000-P1-2062_2011-E350BR
+12X2000X12000-P1-2062_2011-E350BR
+10X2000X6100.-P1-2062_2011-E350BR
+10X2000X6300.-P1-2062_2011-E350BR
+12X2000X7000.-P1-2062_2011-E350BR
+```
+
+Result:
+
+- `Material Type` dropdown is populated.
+- `SKU / Description` dropdown is populated.
+- Qty remains manually entered by the user.
+
+### First Card Confirm - Working
+
+The Teams Adaptive Card submit flow was wired so Power Automate forwards the card response to:
+
+```text
+POST /sku-select-confirm
+```
+
+The second card now appears after clicking **Confirm** on the first card.
+
+Observed second card title:
+
+```text
+Confirm HRC SKU Details - Contract 00175457
+```
+
+Observed values:
+
+| Field | Value |
+|-------|-------|
+| Material | `S_HRCTLF` |
+| SKU | `10X2000X12000-P1-2062_2011-E350BR` |
+| Qty | `10` |
+
+### Current Gap on Second Card
+
+The second card appears, but detailed fields are still blank/manual:
+
+```text
+Customer Order Category
+Eq. Specification Group
+Eq. Specification
+Eq. Sub Specification
+Width
+Thickness
+Length
+Edge Condition
+```
+
+Reason:
+
+- The bot can post the second card.
+- The remaining Power Automate branch `get_sku_details` still needs to return full matched row details in `rows`.
+- Current bot behavior falls back to blank/manual detail fields when `rows` is empty.
+
+### Power Automate Work in Progress - `get_sku_details`
+
+Inside `HRC Master Lookup API`, a second condition branch is being built:
+
+```text
+action = get_sku_details
+```
+
+Current progress:
+
+1. Main condition checks:
+
+```text
+action = get_sku_choices
+```
+
+2. False branch now contains `Condition 1`.
+
+3. `Condition 1` checks:
+
+```text
+action = get_sku_details
+```
+
+4. Inside `Condition 1 -> True`, added:
+
+```text
+List rows present in a table 1
+Filter array 1
+Select 1
+```
+
+5. `Filter array 1` should filter the full Excel rows by:
+
+```text
+B P CODE
+S P CODE
+SHIP PLANT
+MATERIAL
+DESCRIPTION
+```
+
+Expected advanced-mode filter:
+
+```text
+@and(
+  equals(item()?['B P CODE'], triggerBody()?['bp_code']),
+  equals(item()?['S P CODE'], triggerBody()?['sp_code']),
+  equals(string(item()?['SHIP PLANT']), triggerBody()?['ship_plant_code']),
+  equals(item()?['MATERIAL'], triggerBody()?['material']),
+  equals(item()?['DESCRIPTION'], triggerBody()?['description'])
+)
+```
+
+### Current Blocker
+
+`Select 1` in the `get_sku_details` branch became invalid because Power Automate created the Select mapping as a JSON string instead of a JSON object.
+
+Bad shape seen in Code view:
+
+```json
+"select": "{ ... }"
+```
+
+Required shape:
+
+```json
+"select": {
+  "MATERIAL": "@item()?['MATERIAL']",
+  "DESCRIPTION": "@item()?['DESCRIPTION']",
+  "WIDTH": "@item()?['WIDTH']",
+  "THICKNESS": "@item()?['THICKNESS']",
+  "CUST ORDER": "@item()?['CUST ORDER']",
+  "EqSpecifGrp": "@item()?['EqSpecifGrp']",
+  "EqSpecifi": "@item()?['EqSpecifi']",
+  "EqSub_Grade": "@item()?['EqSub_Grade']",
+  "END_APPN": "@item()?['END_APPN']",
+  "RH REQ": "@item()?['RH REQ']",
+  "LENGTH": "@item()?['LENGTH']",
+  "EDGE_CON": "@item()?['EDGE_CON']"
+}
+```
+
+Recommended next action:
+
+1. Delete the broken `Select 1`.
+2. Recreate `Select 1` under `Filter array 1`.
+3. Configure it from Code view so `select` is an object, not a string.
+4. Add a `Response` action for this `get_sku_details` branch:
+
+```json
+{
+  "status": "success",
+  "rows": @{body('Select_1')}
+}
+```
+
+Once `get_sku_details` returns a non-empty `rows` array, the second adaptive card will prefill the detailed HRC SKU fields automatically.
+
+---
+
+## 27. HRC SKU Details Card Prefill Working - 2026-05-14
+
+Latest validation completed in Teams after fixing the Power Automate routing and `get_sku_details` branch.
+
+### What Was Fixed
+
+The Teams first-card Confirm was failing to produce the second card because the **AddSKUbot Teams Incoming Webhook** flow was still calling an old dev tunnel URL:
+
+```text
+https://pv2zsn2r-5000.inc1.devtunnels.ms/sku-confirm
+```
+
+That returned `NotFound`.
+
+Correct URL configured:
+
+```text
+https://jsw-contract-logging-agent-729173585258.asia-south1.run.app/sku-select-confirm
+```
+
+Important endpoint distinction:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/sku-select-confirm` | Handles first HRC SKU card Confirm and posts the second details card |
+| `/sku-confirm` | Old/manual Salesforce line creation route; not used for this HRC confirmation flow |
+
+### HRC Master Lookup API Status
+
+The HRC Master Lookup API now supports:
+
+| Action | Status | Result |
+|--------|--------|--------|
+| `get_sku_choices` | Working | Returns SKU descriptions for the first card dropdown |
+| `get_sku_details` | Working | Returns matched HRC Excel row details for second card prefill |
+
+Power Automate pattern used:
+
+1. `List rows present in a table`
+2. `Filter array` for multi-field matching
+3. `Response` with matched rows
+
+For `get_sku_details`, the flow filters by:
+
+```text
+B P CODE
+S P CODE
+SHIP PLANT
+MATERIAL
+DESCRIPTION
+```
+
+and returns:
+
+```json
+{
+  "status": "success",
+  "rows": [...]
+}
+```
+
+### Verified Teams Result
+
+The second adaptive card now appears and pre-fills values from the HRC Excel file.
+
+Observed card:
+
+```text
+Confirm HRC SKU Details - Contract 00175457
+```
+
+Verified values:
+
+| Field | Value |
+|-------|-------|
+| Material | `S_HRCTLF` |
+| SKU | `10X2000X6100.-P1-2062_2011-E350BR` |
+| Qty | `15` |
+| Customer Order Category | `STD` |
+| Eq. Specification Group | `BIS` |
+| Eq. Specification | `2062_2011` |
+| Eq. Sub Specification | `E350BR` |
+
+This confirms the HRC Excel master lookup is now feeding the second card correctly.
+
+### Current HRC Flow State
+
+Working end-to-end up to SKU details confirmation:
+
+1. User posts contract number in Teams.
+2. Bot posts first HRC SKU selection card.
+3. First card shows B P Code, S P Code, SHIP Plant Code.
+4. Material and SKU/Description dropdowns are populated from HRC Excel.
+5. User enters Qty and clicks Confirm.
+6. Power Automate forwards response to `/sku-select-confirm`.
+7. Bot calls HRC Master Lookup API with `get_sku_details`.
+8. Bot posts second HRC SKU details card with HRC Excel fields prefilled.
+
+### Next Phase
+
+Next work is Salesforce contract line creation:
+
+- Log into JSW Steel Salesforce portal.
+- Search/open contract `00175457`.
+- Start New Contract Line flow.
+- Use confirmed HRC SKU details from Teams/GCS memory.
+- Create the Salesforce line item.
+- Return line item result card to Teams.
+
+Important boundary:
+
+- HRC SKU confirmation and detail prefill are now working.
+- Salesforce line-item creation is the next phase and is not yet active in the main HRC confirmation flow.
+
+### Follow-up UI Field Update - 2026-05-14
+
+Added `Supply Plant / Depot` to the second HRC SKU details card.
+
+Placement:
+
+```text
+RH REQ
+Supply Plant / Depot
+Customer Requested Date
+```
+
+Data source:
+
+- The bot reads this value from the matched HRC lookup row using any of these aliases:
+
+```text
+SHIP PLANT
+ship_plant
+ship_plant_code
+plant_code
+Plant Code
+```
+
+Verified locally:
+
+```text
+Supply Plant / Depot = 1001
+```
+
+This field is included in the submitted SKU details payload as:
+
+```text
+plant_code
+```

@@ -671,6 +671,7 @@ def _hrc_detail_fields(material: str) -> list[tuple[str, str]]:
         ("eq_sub_grade", "Eq. Sub Specification"),
         ("end_appn", "End Application"),
         ("rh_req", "RH REQ"),
+        ("plant_code", "Supply Plant / Depot"),
         ("cust_req_date", "Customer Requested Date"),
         ("width", "Width"),
         ("thickness", "Thickness"),

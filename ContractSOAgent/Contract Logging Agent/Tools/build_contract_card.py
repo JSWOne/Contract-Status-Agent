@@ -569,7 +569,31 @@ def build_hrc_sku_details_card(
     }
 
 
-def build_hrc_sku_confirmed_card(contract_number: str, details: dict) -> dict:
+def build_hrc_sku_confirmed_card(contract_number: str, details: dict, context: dict | None = None) -> dict:
+    context = context or {}
+    facts = [
+        ("Jira Ticket", context.get("ticket_id") or details.get("ticket_id")),
+        ("Contract Number", contract_number),
+        ("Division", context.get("division") or details.get("division") or "HRC"),
+        ("Sold to Party / B P Code", context.get("sold_to_party") or details.get("bp_code")),
+        ("Ship to Party / S P Code", context.get("ship_to_party") or details.get("sp_code")),
+        ("SHIP Plant Code", context.get("ship_plant_code") or details.get("plant_code")),
+        ("Material", details.get("material")),
+        ("SKU / Description", details.get("description")),
+        ("Qty", details.get("qty")),
+        ("Customer Order Category", details.get("customer_order_category")),
+        ("Eq. Specification Group", details.get("eq_specif_grp")),
+        ("Eq. Specification", details.get("eq_specifi")),
+        ("Eq. Sub Specification", details.get("eq_sub_grade")),
+        ("End Application", details.get("end_appn")),
+        ("RH REQ", details.get("rh_req")),
+        ("Supply Plant / Depot", details.get("plant_code") or context.get("ship_plant_code")),
+        ("Customer Requested Date", details.get("cust_req_date")),
+        ("Width", details.get("width")),
+        ("Thickness", details.get("thickness")),
+        ("Length", details.get("length")),
+        ("Edge Condition", details.get("edge_con")),
+    ]
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -577,20 +601,26 @@ def build_hrc_sku_confirmed_card(contract_number: str, details: dict) -> dict:
         "body": [
             {
                 "type": "TextBlock",
-                "text": (
-                    f"Thanks for confirming. I am adding the SKU in contract {contract_number}. "
-                    "I will share the Contract Line Item shortly."
-                ),
+                "text": f"You confirmed the following HRC SKU details for Contract - {contract_number}",
                 "weight": "Bolder",
                 "size": "Medium",
                 "color": "Good",
                 "wrap": True,
             },
-            {"type": "FactSet", "facts": [
-                {"title": "Material", "value": details.get("material") or "-"},
-                {"title": "SKU", "value": details.get("description") or "-"},
-                {"title": "Qty", "value": details.get("qty") or "-"},
-            ]},
+            {
+                "type": "TextBlock",
+                "text": (
+                    f"Thanks for confirming. I am adding the SKU in contract {contract_number}. "
+                    "I will share the Contract Line Item shortly."
+                ),
+                "wrap": True,
+                "spacing": "Small",
+            },
+            {
+                "type": "FactSet",
+                "spacing": "Medium",
+                "facts": [{"title": label, "value": str(value or "-")} for label, value in facts],
+            },
         ],
     }
 

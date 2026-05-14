@@ -415,6 +415,7 @@ def _handle_sku_details_confirm_payload(data: dict):
         return jsonify({"status": "validation_error", "missing_fields": missing}), 400
 
     details = dict(data)
+    context = _enrich_context_from_jira(_context_from_memory_or_payload(contract_number, data))
     store_confirmed_hrc_sku(contract_number, details)
     safe_write_memory_step(
         "hrc_sku_details_confirmed",
@@ -422,7 +423,7 @@ def _handle_sku_details_confirm_payload(data: dict):
         f"Confirmed HRC SKU details for contract {contract_number}",
         {"contract_number": contract_number, "details": details},
     )
-    post_sku_card(build_hrc_sku_confirmed_card(contract_number, details))
+    post_sku_card(build_hrc_sku_confirmed_card(contract_number, details, context))
 
     line_data = _hrc_details_to_salesforce_line_data(contract_number, details)
 

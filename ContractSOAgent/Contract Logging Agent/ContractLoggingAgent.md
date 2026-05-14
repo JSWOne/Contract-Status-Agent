@@ -1891,3 +1891,13 @@ Expected result:
 Confirm SKU Details -> thanks/progress Teams card -> Salesforce contract line creation -> contract line item card
 Customer Requested Date -> Jira Customer Requested Delivery Date, for example 14/05/2026 for May 14, 2026
 ```
+
+### HRC SKU Confirmation Audit Card - 2026-05-14
+
+After the user clicks **Confirm SKU Details**, the Teams progress card now also keeps an audit snapshot of the submitted values.
+
+The card includes:
+
+- Jira ticket, contract number, division, Sold to Party / B P Code, Ship to Party / S P Code, and SHIP Plant Code.
+- Material, SKU / Description, Qty, Customer Order Category, equipment specification fields, End Application, RH REQ, Supply Plant / Depot, Customer Requested Date, dimensions, and Edge Condition.
+- The progress message that SKU creation has started and the Contract Line Item will be shared shortly.

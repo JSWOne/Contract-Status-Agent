@@ -361,7 +361,8 @@ def _fill_contract_line(page, data: dict) -> None:
     _screenshot(page, "07_cust_order_cat")
 
     # 3. Part Number (= SKU Description) — search lookup with magnifier icon
-    _fill_part_number(page, data.get("sku_description", ""))
+    if not _fill_part_number(page, data.get("sku_description", "")):
+        raise RuntimeError("Part Number / SKU Description lookup was not selected")
     page.wait_for_timeout(2_000)
     _screenshot(page, "08_part_number")
 
@@ -561,36 +562,32 @@ def _click_dropdown_option(page, value: str, timeout: int = 6_000) -> None:
         log.warning("  could not click dropdown option '%s': %s", value, e)
 
 
-def _fill_part_number(page, value: str) -> None:
+def _fill_part_number(page, value: str) -> bool:
     """Fill the Part Number lookup by clicking the magnifying glass button next to the disabled input."""
     if not value:
-        return
+        return False
     log.info("Filling Part Number: '%s'", value)
     try:
         # Scroll the disabled input into view first
-        inp = page.locator('input[placeholder="Select Part Number"]').first
+        inp = page.locator(
+            'input[placeholder="Select Part Number"], '
+            'input[placeholder*="Part Number"], '
+            'input[aria-label*="Part Number"]'
+        ).first
         inp.scroll_into_view_if_needed(timeout=5_000)
         page.wait_for_timeout(500)
 
         # Click the search button (magnifying glass) — traverse up DOM to find it.
-        clicked = page.evaluate("""
-            () => {
-                const inp = document.querySelector('input[placeholder="Select Part Number"]');
-                if (!inp) return false;
-                // Walk up up to 6 ancestor levels looking for a button
-                let el = inp;
-                for (let i = 0; i < 6; i++) {
-                    el = el.parentElement;
-                    if (!el) break;
-                    const btn = el.querySelector('button, [role="button"]');
-                    if (btn) { btn.click(); return true; }
-                }
-                return false;
-            }
-        """)
+        clicked = _click_lookup_button_near_input(page, "Part Number")
         if not clicked:
-            log.warning("  Part Number search button not found via JS")
-            return
+            try:
+                inp.click(timeout=3_000)
+                clicked = True
+            except Exception:
+                pass
+        if not clicked:
+            log.warning("  Part Number search button not found")
+            return False
         page.wait_for_timeout(1_500)
         log.info("  Part Number search button clicked")
 
@@ -604,8 +601,65 @@ def _fill_part_number(page, value: str) -> None:
             has_text=re.compile(re.escape(value), re.IGNORECASE)
         ).first.click(timeout=8_000)
         log.info("  Part Number selected")
+        return True
     except Exception as e:
         log.warning("  Part Number failed: %s", e)
+        return False
+
+
+def _click_lookup_button_near_input(page, label: str) -> bool:
+    return bool(page.evaluate(
+        """(labelText) => {
+            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+            const isVisible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const inputs = Array.from(document.querySelectorAll('input')).filter((input) => {
+                const text = [
+                    input.placeholder,
+                    input.getAttribute('aria-label'),
+                    input.name,
+                    input.id,
+                ].map(norm).join(' ');
+                return /part number/i.test(text) || /select part number/i.test(text);
+            });
+            const labels = Array.from(document.querySelectorAll('label, span, div'))
+                .filter((el) => norm(el.textContent) === labelText);
+            for (const label of labels) {
+                const forId = label.getAttribute('for');
+                if (forId) {
+                    const byFor = document.getElementById(forId);
+                    if (byFor && !inputs.includes(byFor)) inputs.unshift(byFor);
+                }
+            }
+            for (const input of inputs) {
+                const roots = [];
+                let el = input;
+                for (let i = 0; i < 8 && el; i++, el = el.parentElement) roots.push(el);
+                for (const root of roots) {
+                    const buttons = Array.from(root.querySelectorAll(
+                        'button, [role="button"], lightning-button-icon, lightning-icon, .slds-button_icon'
+                    )).filter(isVisible);
+                    const preferred = buttons.find((btn) => {
+                        const text = norm(btn.title || btn.getAttribute('aria-label') || btn.textContent);
+                        return /search|lookup|part/i.test(text);
+                    });
+                    const target = preferred || buttons[buttons.length - 1];
+                    if (target) {
+                        const clickable = target.shadowRoot && target.shadowRoot.querySelector('button')
+                            ? target.shadowRoot.querySelector('button')
+                            : target;
+                        clickable.click();
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }""",
+        label,
+    ))
 
 
 def _fill_supply_plant(page, value: str, plant_raw: str = "") -> None:

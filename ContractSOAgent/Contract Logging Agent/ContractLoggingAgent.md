@@ -1901,3 +1901,24 @@ The card includes:
 - Jira ticket, contract number, division, Sold to Party / B P Code, Ship to Party / S P Code, and SHIP Plant Code.
 - Material, SKU / Description, Qty, Customer Order Category, equipment specification fields, End Application, RH REQ, Supply Plant / Depot, Customer Requested Date, dimensions, and Edge Condition.
 - The progress message that SKU creation has started and the Contract Line Item will be shared shortly.
+
+### HRC Contract Line Part Number Lookup Fix - 2026-05-14
+
+Issue:
+
+- Contract line creation for contract `00176192` failed with:
+
+```text
+Contract line name was not captured after Save
+```
+
+- Cloud Run logs showed the real earlier cause:
+
+```text
+Part Number search button not found via JS
+```
+
+Fix:
+
+- The Salesforce HRC line script now finds the Part Number / SKU Description lookup search button by proximity to the Part Number input instead of relying on one older DOM shape.
+- If Part Number cannot be selected, the script now fails immediately with a clear error instead of continuing to Save and later failing with a generic line-number capture error.

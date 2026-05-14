@@ -944,15 +944,16 @@ def _save(page) -> str:
         page.wait_for_timeout(800)
         # Use force=True to bypass stability checks that trip on LWC animations
         save_btn.click(timeout=15_000, force=True)
-        page.wait_for_timeout(5_000)
+        page.wait_for_timeout(10_000)
         _screenshot(page, "19_after_save")
-        if _has_save_error(page):
-            log.warning("Save was rejected by Salesforce; leaving contract line name empty")
-            return ""
+        save_error = _extract_save_error(page)
+        if save_error:
+            log.warning("Save was rejected by Salesforce: %s", save_error)
+            raise RuntimeError(save_error)
         log.info("Saved. URL: %s", page.url)
     except Exception as e:
         log.warning("Save failed: %s", e)
-        return ""
+        raise
 
     # Read the contract line name from the detail page heading (e.g. "00170850_20")
     line_name = ""
@@ -987,23 +988,82 @@ def _save(page) -> str:
     if line_name:
         log.info("Contract line name: %s", line_name)
     else:
-        log.warning("Could not read contract line name from page")
+        diagnostic = _after_save_diagnostics(page)
+        log.warning("Could not read contract line name from page. Diagnostics: %s", diagnostic)
+        raise RuntimeError(f"Contract line name was not captured after Save. {diagnostic}")
     return line_name
 
 
-def _has_save_error(page) -> bool:
-    """Detect Salesforce validation/toast errors after clicking Save."""
+def _extract_save_error(page) -> str:
+    """Return Salesforce validation/toast errors after clicking Save, if visible."""
+    messages = []
     try:
+        for sel in [
+            '[role="alert"]',
+            '.slds-notify_toast',
+            '.slds-form-element__help',
+            '.slds-has-error',
+            'lightning-formatted-rich-text',
+        ]:
+            try:
+                for text in page.locator(sel).all_inner_texts(timeout=1_000):
+                    text = " ".join(str(text or "").split())
+                    if text and text not in messages:
+                        messages.append(text)
+            except Exception:
+                pass
         body_text = page.inner_text("body", timeout=2_000)
-        if "Error!" in body_text or "cannot be greater than Contract's End Date" in body_text:
-            return True
-        if "New Contract Line" in body_text and "Save" in body_text:
-            toast = page.locator('text=Error!').first
-            if toast.is_visible(timeout=500):
-                return True
+        for pattern in (
+            r"Error!\s*([^\\n]+)",
+            r"Review the errors on this page\.?",
+            r"Complete this field\.?",
+            r"cannot be greater than Contract's End Date",
+        ):
+            match = re.search(pattern, body_text, re.IGNORECASE)
+            if match:
+                text = " ".join(match.group(0).split())
+                if text not in messages:
+                    messages.append(text)
     except Exception:
         pass
-    return False
+    return " | ".join(messages[:8])[:700]
+
+
+def _after_save_diagnostics(page) -> str:
+    try:
+        body_text = " ".join(page.inner_text("body", timeout=2_000).split())
+    except Exception:
+        body_text = ""
+    if "New Contract Line" in body_text and "Save" in body_text:
+        missing = _missing_required_fields(page)
+        if missing:
+            return f"Salesforce stayed on New Contract Line form. Missing/invalid fields: {', '.join(missing)}"
+        return "Salesforce stayed on New Contract Line form after Save; no validation text was exposed."
+    return f"URL after Save: {page.url}. Page text: {body_text[:350]}"
+
+
+def _missing_required_fields(page) -> list[str]:
+    try:
+        return page.evaluate(
+            """() => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const fields = [];
+                for (const label of document.querySelectorAll('label')) {
+                    const text = norm(label.textContent).replace(/^\\*/, '').trim();
+                    if (!text) continue;
+                    const required = label.textContent.includes('*') || label.querySelector('.required, abbr');
+                    if (!required) continue;
+                    const root = label.closest('.slds-form-element, lightning-layout-item, div') || label.parentElement;
+                    const input = root && root.querySelector('input, textarea, select');
+                    const button = root && root.querySelector('button[aria-label], button[title]');
+                    const value = input ? norm(input.value || input.getAttribute('value')) : norm(button && button.textContent);
+                    if (!value || /^--None--$/i.test(value) || /^Select /i.test(value)) fields.push(text);
+                }
+                return Array.from(new Set(fields)).slice(0, 12);
+            }"""
+        )
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------

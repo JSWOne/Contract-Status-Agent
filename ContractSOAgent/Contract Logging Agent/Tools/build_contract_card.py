@@ -376,7 +376,7 @@ def build_sku_failure_card(contract_number: str, error: str) -> dict:
                 "type": "FactSet",
                 "facts": [
                     {"title": "Contract Number", "value": contract_number},
-                    {"title": "Error", "value": (error or "-")[:200]},
+                    {"title": "Error", "value": (error or "-")[:500]},
                 ],
             },
         ],

@@ -1923,3 +1923,22 @@ Follow-up:
 - Part Number is not a user-confirmed mandatory field for the HRC flow.
 - The script no longer blocks contract line creation if Part Number cannot be selected.
 - The flow remains focused on the mandatory/known Salesforce fields already used earlier.
+
+### Salesforce Save Diagnostics - 2026-05-14
+
+Issue:
+
+- The bot still showed the generic message:
+
+```text
+Contract line name was not captured after Save
+```
+
+- The latest Cloud Run run reached Salesforce Save, but no line number was visible/captured afterward.
+
+Fix:
+
+- The Salesforce helper now waits longer after Save.
+- If Salesforce rejects Save, it extracts visible toast/form validation text and raises that exact message.
+- If the modal remains open without a visible error, it reports which required fields still appear blank/invalid.
+- Teams failure cards now show a longer error message so the actual Salesforce reason is visible.

@@ -10,6 +10,7 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 from close_ticket import close_ticket  # noqa: E402
 from create_ticket import create_or_update_ticket  # noqa: E402
+from jira_teams_notifier import notify_jira_ticket_created  # noqa: E402
 from update_ticket import update_ticket  # noqa: E402
 
 
@@ -53,6 +54,17 @@ def close_ticket_route(ticket_id: str):
     try:
         result = close_ticket(ticket_id, payload.get("comment"))
         return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.post("/jira-ticket-created")
+def jira_ticket_created_route():
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = notify_jira_ticket_created(payload)
+        status = 200 if result.get("ok") else 202
+        return jsonify(result), status
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 

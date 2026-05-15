@@ -158,3 +158,156 @@ Pending:
 - Confirm the target Jira project key and available issue types.
 - Run one real test ticket in Jira.
 - Wire Contract Logging / Status agents to call Jira Ticket Agent on repeated failures.
+
+### Cloud Run Deployment - 2026-05-15
+
+Status: Deployed as a separate Cloud Run service.
+
+Deployment details:
+
+- Cloud Run service: `jsw-jira-ticket-agent`
+- Region: `asia-south1`
+- Latest revision: `jsw-jira-ticket-agent-00002-jqk`
+- Service URL: `https://jsw-jira-ticket-agent-blajkpcmsa-el.a.run.app`
+- Health endpoint verified:
+
+```json
+{
+  "service": "jira-ticket-agent",
+  "status": "ok"
+}
+```
+
+Production safety check:
+
+- Existing Contract Logging Agent remained unchanged on `jsw-contract-logging-agent-00058-c9v`.
+- Existing Contract Status Agent remained unchanged on `jsw-contract-status-agent-00044-gs2`.
+- Jira Ticket Agent was deployed through its own Cloud Build trigger: `jsw-jira-ticket-agent-deploy`.
+
+Runtime configuration:
+
+- Reused existing Jira values from the older local keys.
+- `JIRA_DOMAIN=jswone.atlassian.net`
+- `JIRA_EMAIL=milind.kumar@jsw.in`
+- `JIRA_PROJECT_KEY=O360`
+- `JIRA_DONE_TRANSITION_NAME=Done`
+- `JIRA_API_TOKEN` configured on the Cloud Run service without printing the token.
+
+Pending after deployment:
+
+- Create one controlled real Jira test ticket through the new service.
+- Add authentication/hardening if the endpoint will be exposed beyond internal Power Automate/service calls.
+- Wire producer agents to call `POST /tickets` only after their retry/failure criteria are met.
+
+### Cloud Run Smoke Test - 2026-05-15
+
+Status: Passed.
+
+Change made:
+
+- O360 does not support Jira issue type `Task`.
+- Added configurable issue-type mapping:
+  - `Task -> Support`
+  - `Story -> New Feature`
+  - `Escalation -> Developer escalation`
+  - `Bug -> Bug`
+
+Deployment:
+
+- Jira Ticket Agent redeployed successfully.
+- Latest revision after environment update: `jsw-jira-ticket-agent-00004-575`
+- Service URL remains: `https://jsw-jira-ticket-agent-blajkpcmsa-el.a.run.app`
+
+Smoke test result:
+
+```json
+{
+  "created": true,
+  "ticket_id": "O360-16089",
+  "ticket_url": "https://jswone.atlassian.net/browse/O360-16089"
+}
+```
+
+Production safety check:
+
+- Contract Logging Agent remained unchanged on `jsw-contract-logging-agent-00058-c9v`.
+- Contract Status Agent remained unchanged on `jsw-contract-status-agent-00044-gs2`.
+
+Next:
+
+- Close/delete test ticket `O360-16089` if it is not needed.
+- Wire Contract Logging / Status agents to call Jira Ticket Agent only for repeated/real failures.
+
+### Jira Created Teams Endpoint - 2026-05-15
+
+Status: Endpoint deployed, Teams webhook configuration pending.
+
+Issue found:
+
+- Jira Automation rule `Teams New Ticket Notifier` was still calling an old local dev tunnel:
+
+```text
+https://pv2zsn2r-5000.inc1.devtunnels.ms/jira-ticket-created
+```
+
+- That is why Jira Automation audit showed success but the Power Automate Teams flow had no new runs.
+
+Fix added:
+
+- Added Cloud Run route:
+
+```text
+POST /jira-ticket-created
+```
+
+- Jira Automation can now call:
+
+```text
+https://jsw-jira-ticket-agent-blajkpcmsa-el.a.run.app/jira-ticket-created
+```
+
+Deployment:
+
+- Jira Ticket Agent redeployed successfully.
+- Latest revision: `jsw-jira-ticket-agent-00005-vqc`
+- Contract Logging Agent remained unchanged on `jsw-contract-logging-agent-00058-c9v`.
+- Contract Status Agent remained unchanged on `jsw-contract-status-agent-00044-gs2`.
+
+Route verification:
+
+- Test request for `O360-16091` reached Cloud Run and normalized ticket details correctly.
+- Teams post did not run yet because `JIRA_TEAMS_WEBHOOK_URL` is not configured on the Cloud Run service.
+
+Pending:
+
+- Copy the HTTP trigger URL from Power Automate flow `Jira Tickets Teams Incoming Webhook`.
+- Set it on Cloud Run as `JIRA_TEAMS_WEBHOOK_URL`.
+- Retest by creating a new Jira ticket or rerunning Jira Automation.
+
+### Jira Teams Webhook Configuration - 2026-05-15
+
+Status: Configured and tested.
+
+Update:
+
+- Set `JIRA_TEAMS_WEBHOOK_URL` on Cloud Run service `jsw-jira-ticket-agent` using the Power Automate flow `Jira Tickets Teams Incoming Webhook`.
+- New Jira service revision after env update: `jsw-jira-ticket-agent-00006-mzw`.
+
+Verification:
+
+- Health check passed for `https://jsw-jira-ticket-agent-blajkpcmsa-el.a.run.app/`.
+- Test POST to `/jira-ticket-created` for `O360-16091` returned:
+
+```json
+{
+  "ok": true,
+  "status_code": 202,
+  "teams_posted": true
+}
+```
+
+Notes:
+
+- HTTP `202` means Power Automate accepted the Teams card request. Final visual delivery should be confirmed in the Teams `Jira Tickets` channel or Power Automate run history.
+- Existing Contract Logging Agent remained unchanged on `jsw-contract-logging-agent-00058-c9v`.
+- Existing Contract Status Agent remained unchanged on `jsw-contract-status-agent-00044-gs2`.

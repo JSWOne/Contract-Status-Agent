@@ -196,6 +196,9 @@ class JiraClient:
             json={"body": adf_doc(comment)},
         )
 
+    def get_issue(self, issue_key: str) -> dict[str, Any]:
+        return self.request("GET", f"/rest/api/3/issue/{issue_key}?expand=names")
+
     def get_transitions(self, issue_key: str) -> list[dict[str, Any]]:
         data = self.request("GET", f"/rest/api/3/issue/{issue_key}/transitions")
         return data.get("transitions", [])

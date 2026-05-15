@@ -1,0 +1,42 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.jira-ticket
+      - -t
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/jira-ticket-agent:$BUILD_ID
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/jira-ticket-agent:$BUILD_ID
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - jsw-jira-ticket-agent
+      - --image
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/jira-ticket-agent:$BUILD_ID
+      - --region
+      - asia-south1
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --timeout
+      - "300"
+      - --memory
+      - 512Mi
+      - --cpu
+      - "1"
+      - --set-env-vars
+      - JIRA_DOMAIN=jswone.atlassian.net,JIRA_EMAIL=milind.kumar@jsw.in,JIRA_PROJECT_KEY=O360,JIRA_DONE_TRANSITION_NAME=Done
+
+images:
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/jira-ticket-agent:$BUILD_ID
+
+options:
+  logging: CLOUD_LOGGING_ONLY

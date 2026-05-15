@@ -33,7 +33,7 @@ steps:
       - --cpu
       - "1"
       - --set-env-vars
-      - JIRA_DOMAIN=jswone.atlassian.net,JIRA_EMAIL=milind.kumar@jsw.in,JIRA_PROJECT_KEY=O360,JIRA_DONE_TRANSITION_NAME=Done
+      - JIRA_DOMAIN=jswone.atlassian.net,JIRA_EMAIL=milind.kumar@jsw.in,JIRA_PROJECT_KEY=O360,JIRA_DONE_TRANSITION_NAME=Done,JIRA_TASK_ISSUE_TYPE=Support,JIRA_STORY_ISSUE_TYPE=New Feature,JIRA_ESCALATION_ISSUE_TYPE=Developer escalation
 
 images:
   - asia-south1-docker.pkg.dev/$PROJECT_ID/contract-agents/jira-ticket-agent:$BUILD_ID

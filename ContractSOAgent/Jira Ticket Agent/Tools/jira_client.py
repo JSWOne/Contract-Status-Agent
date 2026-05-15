@@ -112,6 +112,15 @@ def priority_name(priority: str) -> str:
     return mapping.get(priority.upper(), priority)
 
 
+def issue_type_name(issue_type: str) -> str:
+    mapping = {
+        "TASK": os.getenv("JIRA_TASK_ISSUE_TYPE", "Support"),
+        "STORY": os.getenv("JIRA_STORY_ISSUE_TYPE", "New Feature"),
+        "ESCALATION": os.getenv("JIRA_ESCALATION_ISSUE_TYPE", "Developer escalation"),
+    }
+    return mapping.get(issue_type.upper(), issue_type)
+
+
 class JiraClient:
     def __init__(self) -> None:
         domain = os.getenv("JIRA_DOMAIN", "").strip()
@@ -170,7 +179,7 @@ class JiraClient:
     ) -> dict[str, Any]:
         fields: dict[str, Any] = {
             "project": {"key": project_key},
-            "issuetype": {"name": issue_type},
+            "issuetype": {"name": issue_type_name(issue_type)},
             "summary": summary,
             "description": adf_doc(description),
             "priority": {"name": priority_name(priority)},

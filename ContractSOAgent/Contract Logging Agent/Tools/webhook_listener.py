@@ -10,7 +10,7 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -38,7 +38,7 @@ from contract_memory import (
     find_contract_context,
     get_sku_pending_request,
     save_sku_pending_request,
-    store_confirmed_hrc_sku,
+    store_confirmed_sku,
 )
 from create_contract_in_portal import create_contract_in_portal
 from fetch_jira_ticket import JiraAuthError, JiraConnectionError, fetch_jira_ticket
@@ -60,13 +60,22 @@ MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
 GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
 
-HRC_SALESFORCE_PRODUCT_BY_MATERIAL = {
-    "S_HRCF": "HR Coil - (S_HRCF)",
-    "S_HRCTLF": "HR Sheet & Plate - (S_HRCTLF)",
+SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA"}
+
+SALESFORCE_PRODUCT_BY_MATERIAL = {
+    "HRC": {
+        "S_HRCF": "HR Coil - (S_HRCF)",
+        "S_HRCTLF": "HR Sheet & Plate - (S_HRCTLF)",
+    },
+    "CRCA": {
+        "S_CRCACF": "CRCA Coil - (S_CRCACF)",
+        "S_CRCASF": "CRCA Sheet - (S_CRCASF)",
+    },
 }
 
 PLANT_NAME_BY_CODE = {
     "1001": "1001 - Vijayanagar Works",
+    "1014": "1014 - Tarapur Works",
 }
 
 _MEMORY_DEFAULT = {
@@ -261,7 +270,7 @@ def sku_webhook():
             result = _post_sku_confirmation_card(contract_number)
             if result.get("status") != "success":
                 app.logger.info(
-                    "[hrc-sku] %s: selection card was not posted; status=%s detail=%s",
+                    "[sku] %s: selection card was not posted; status=%s detail=%s",
                     contract_number,
                     result.get("status"),
                     result.get("detail"),
@@ -310,7 +319,7 @@ def sku_confirm():
 def sku_select_confirm():
     data = normalise_confirm_payload(request.get_json(force=True, silent=True) or {})
     if _is_hrc_details_payload(data):
-        app.logger.info("[hrc-sku] Details payload received on /sku-select-confirm; routing to details handler")
+        app.logger.info("[sku] Details payload received on /sku-select-confirm; routing to details handler")
         return _handle_sku_details_confirm_payload(data)
 
     contract_number = (data.get("contract_number") or "").strip()
@@ -329,15 +338,17 @@ def sku_select_confirm():
         missing.append("Qty")
     if missing:
         message = f"Please fill {', '.join(missing)} before confirming"
-        app.logger.info("[hrc-sku] validation failed for %s: %s", contract_number, ", ".join(missing))
+        app.logger.info("[sku] validation failed for %s: %s", contract_number, ", ".join(missing))
         post_sku_card(build_hrc_sku_validation_failed_card(message, contract_number))
         return jsonify({"status": "validation_error", "missing_fields": missing}), 400
 
     context = _enrich_context_from_jira(_context_from_memory_or_payload(contract_number, data))
+    division = (context.get("division") or data.get("division") or "").strip().upper()
     selection = {"material": material, "description": description, "qty": qty}
     app.logger.info(
-        "[hrc-sku] %s: selected material=%s description=%s qty=%s",
+        "[sku] %s: division=%s selected material=%s description=%s qty=%s",
         contract_number,
+        division,
         material,
         description,
         qty,
@@ -345,7 +356,7 @@ def sku_select_confirm():
 
     try:
         lookup = get_sku_details(
-            "HRC",
+            division,
             context.get("sold_to_party", ""),
             context.get("ship_to_party", ""),
             context.get("ship_plant_code", ""),
@@ -354,7 +365,7 @@ def sku_select_confirm():
         )
         rows = lookup.get("rows") or []
         request_id = save_sku_pending_request(
-            {"contract_number": contract_number, "context": context, "selection": selection, "rows": rows}
+            {"contract_number": contract_number, "division": division, "context": context, "selection": selection, "rows": rows}
         )
         if len(rows) > 1:
             post_sku_card(build_hrc_sku_row_choice_card(context, selection, rows, request_id))
@@ -364,8 +375,8 @@ def sku_select_confirm():
         post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))
         return jsonify({"status": "details_card_posted", "request_id": request_id, "rows": len(rows)})
     except Exception as exc:
-        app.logger.exception("[hrc-sku] detail lookup failed for %s: %s", contract_number, exc)
-        post_sku_card(build_hrc_sku_validation_failed_card("Could not fetch HRC SKU details. Detailed error is available in Cloud Run logs", contract_number))
+        app.logger.exception("[sku] detail lookup failed for %s: %s", contract_number, exc)
+        post_sku_card(build_hrc_sku_validation_failed_card(f"Could not fetch {division or 'SKU'} details. Detailed error is available in Cloud Run logs", contract_number))
         return jsonify({"status": "error", "detail": str(exc)}), 500
 
 
@@ -416,16 +427,17 @@ def _handle_sku_details_confirm_payload(data: dict):
 
     details = dict(data)
     context = _enrich_context_from_jira(_context_from_memory_or_payload(contract_number, data))
-    store_confirmed_hrc_sku(contract_number, details)
+    division = (context.get("division") or details.get("division") or "").strip().upper()
+    store_confirmed_sku(contract_number, details, division)
     safe_write_memory_step(
-        "hrc_sku_details_confirmed",
+        "sku_details_confirmed",
         "success",
-        f"Confirmed HRC SKU details for contract {contract_number}",
-        {"contract_number": contract_number, "details": details},
+        f"Confirmed {division or 'SKU'} details for contract {contract_number}",
+        {"contract_number": contract_number, "division": division, "details": details},
     )
     post_sku_card(build_hrc_sku_confirmed_card(contract_number, details, context))
 
-    line_data = _hrc_details_to_salesforce_line_data(contract_number, details)
+    line_data = _sku_details_to_salesforce_line_data(contract_number, details)
 
     def _bg():
         with app.app_context():
@@ -436,7 +448,8 @@ def _handle_sku_details_confirm_payload(data: dict):
 
 
 def _is_hrc_details_payload(data: dict) -> bool:
-    if (data.get("stage") or "").strip() == "hrc_sku_details":
+    stage = (data.get("stage") or "").strip().lower()
+    if stage in {"hrc_sku_details", "crca_sku_details", "sku_details"}:
         return True
     detail_keys = {
         "customer_order_category",
@@ -450,21 +463,23 @@ def _is_hrc_details_payload(data: dict) -> bool:
         "thickness",
         "length",
         "edge_con",
+        "thick_tol_type",
+        "oil_req",
     }
     return any(str(data.get(key) or "").strip() for key in detail_keys)
 
 
 def _post_sku_confirmation_card(contract_number: str) -> dict:
     try:
-        app.logger.info("[hrc-sku] Loading contract context for %s", contract_number)
+        app.logger.info("[sku] Loading contract context for %s", contract_number)
         context = find_contract_context(contract_number)
         if not context:
             post_sku_card(build_hrc_sku_validation_failed_card("Could not find this contract in Contract Logging memory", contract_number))
             return {"status": "not_found", "detail": "contract not found in memory"}
 
         division = (context.get("division") or "").strip().upper()
-        if division != "HRC":
-            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC SKU confirmation is enabled for now", contract_number))
+        if division not in SUPPORTED_SKU_DIVISIONS:
+            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC and CRCA SKU confirmation are enabled for now", contract_number))
             return {"status": "unsupported_division", "detail": f"division={division or '<blank>'}"}
 
         if not context.get("sold_to_party") or not context.get("ship_to_party"):
@@ -473,7 +488,7 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
 
         context = _enrich_context_from_jira(context)
         lookup = get_sku_choices(
-            "HRC",
+            division,
             context.get("sold_to_party", ""),
             context.get("ship_to_party", ""),
             context.get("ship_plant_code", ""),
@@ -481,16 +496,16 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
         card = build_hrc_sku_selection_card(context, lookup)
         post_sku_card(card)
         safe_write_memory_step(
-            "post_hrc_sku_selection_card",
+            "post_sku_selection_card",
             "success",
-            f"Posted HRC SKU selection card for contract {contract_number}",
-            {"contract_number": contract_number, "context": context},
+            f"Posted {division} SKU selection card for contract {contract_number}",
+            {"contract_number": contract_number, "division": division, "context": context},
         )
         return {"status": "success", "detail": "sku selection card posted"}
     except Exception as exc:
         app.logger.exception("[sku] Failed to post SKU card for %s: %s", contract_number, exc)
         try:
-            post_sku_card(build_hrc_sku_validation_failed_card("Could not post HRC SKU card. Detailed error is available in Cloud Run logs", contract_number))
+            post_sku_card(build_hrc_sku_validation_failed_card("Could not post SKU card. Detailed error is available in Cloud Run logs", contract_number))
         except Exception:
             pass
         return {"status": "error", "detail": str(exc)}
@@ -526,15 +541,20 @@ def _run_sku_creation(contract_number: str, line_data: dict, details: dict | Non
 
 
 def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) -> dict:
+    return _sku_details_to_salesforce_line_data(contract_number, {**details, "division": "HRC"})
+
+
+def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) -> dict:
     context = _enrich_context_from_jira(find_contract_context(contract_number) or {"contract_number": contract_number})
     material = (details.get("material") or "").strip().upper()
+    division = (context.get("division") or details.get("division") or "").strip().upper() or _division_from_material(material)
     plant_code = details.get("plant_code") or context.get("ship_plant_code", "")
     plant_code = _normalise_plant_for_salesforce(plant_code)
     customer_requested_date = _customer_requested_date_from_context(context) or details.get("cust_req_date", "")
 
     line_data = {
-        "division": "HRC",
-        "product_name": HRC_SALESFORCE_PRODUCT_BY_MATERIAL.get(material, details.get("product_name", "")),
+        "division": division,
+        "product_name": SALESFORCE_PRODUCT_BY_MATERIAL.get(division, {}).get(material, details.get("product_name", "")),
         "customer_order_category": details.get("customer_order_category", ""),
         "sku_description": details.get("description", ""),
         "eq_specif_grp": details.get("eq_specif_grp", ""),
@@ -547,9 +567,19 @@ def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) ->
         "thickness": details.get("thickness", ""),
         "length": details.get("length", ""),
         "edge_con": details.get("edge_con", ""),
+        "thick_tol_type": details.get("thick_tol_type", ""),
+        "oil_req": details.get("oil_req", ""),
         "plant_code": plant_code,
     }
     return line_data
+
+
+def _division_from_material(material: str) -> str:
+    material = (material or "").strip().upper()
+    for division, products in SALESFORCE_PRODUCT_BY_MATERIAL.items():
+        if material in products:
+            return division
+    return ""
 
 
 def _normalise_plant_for_salesforce(value: str) -> str:
@@ -564,9 +594,18 @@ def _normalise_plant_for_salesforce(value: str) -> str:
 def _normalise_customer_requested_date(value: str, contract_end_date: str = "") -> str:
     requested = _parse_date(value)
     contract_end = _parse_date(contract_end_date)
+    today = datetime.now(timezone.utc).date()
+    if requested and requested.date() <= today:
+        adjusted = datetime.combine(today + timedelta(days=1), datetime.min.time())
+        app.logger.info(
+            "[sku] Customer Requested Date %s is today/past; using next valid date %s",
+            value,
+            adjusted.strftime("%d/%m/%Y"),
+        )
+        requested = adjusted
     if requested and contract_end and requested > contract_end:
         app.logger.info(
-            "[hrc-sku] Customer Requested Date %s is after Contract End Date %s; using contract end date",
+            "[sku] Customer Requested Date %s is after Contract End Date %s; using contract end date",
             value,
             contract_end_date,
         )
@@ -615,7 +654,8 @@ def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:
     if not context.get("customer_requested_delivery_date") and data.get("cust_req_date"):
         context["customer_requested_delivery_date"] = str(data.get("cust_req_date")).strip()
     context.setdefault("contract_number", contract_number)
-    context.setdefault("division", "HRC")
+    if data.get("division") and not context.get("division"):
+        context["division"] = str(data.get("division")).strip()
     return context
 
 
@@ -642,7 +682,7 @@ def _enrich_context_from_jira(context: dict) -> dict:
             if not context.get(key) and details.get(key):
                 context[key] = str(details.get(key)).strip()
     except Exception as exc:
-        app.logger.warning("[hrc-sku] Could not enrich context from Jira for %s: %s", ticket_id, exc)
+        app.logger.warning("[sku] Could not enrich context from Jira for %s: %s", ticket_id, exc)
     return context
 
 
@@ -659,6 +699,7 @@ def _customer_requested_date_from_context(context: dict | None) -> str:
 
 
 def _manual_hrc_details(selection: dict, context: dict | None = None) -> dict:
+    division = ((context or {}).get("division") or selection.get("division") or "").strip().upper()
     return {
         "customer_order_category": "",
         "eq_specif_grp": "",
@@ -672,9 +713,12 @@ def _manual_hrc_details(selection: dict, context: dict | None = None) -> dict:
         "thickness": "",
         "length": "",
         "edge_con": "",
+        "thick_tol_type": "",
+        "oil_req": "",
         "material": selection.get("material", ""),
         "description": selection.get("description", ""),
         "qty": selection.get("qty", ""),
+        "division": division,
     }
 
 
@@ -697,6 +741,8 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
             "thickness": _row_value(row, "THICKNESS", "thickness"),
             "length": _row_value(row, "LENGTH", "length"),
             "edge_con": _row_value(row, "EDGE_CON", "EDGE CON", "edge_con"),
+            "thick_tol_type": _row_value(row, "THICK_TOL_TYPE", "Thickness Tolerance Type", "thick_tol_type"),
+            "oil_req": _row_value(row, "OIL_REQ", "Oil Required", "oil_req"),
         }
     )
     return details

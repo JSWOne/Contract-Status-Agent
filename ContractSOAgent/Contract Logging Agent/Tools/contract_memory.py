@@ -170,7 +170,9 @@ def save_sku_pending_request(payload: dict[str, Any], request_id: str | None = N
     if len(pending) > 100:
         for key in sorted(pending.keys())[:-100]:
             pending.pop(key, None)
-    memory["last_action"] = f"Saved pending HRC SKU request {request_id}"
+    division = payload.get("division") or payload.get("context", {}).get("division") or ""
+    label = f"{division} SKU".strip() if division else "SKU"
+    memory["last_action"] = f"Saved pending {label} request {request_id}"
     write_memory(memory)
     return request_id
 
@@ -180,16 +182,21 @@ def get_sku_pending_request(request_id: str) -> dict[str, Any] | None:
 
 
 def store_confirmed_hrc_sku(contract_number: str, payload: dict[str, Any]) -> None:
+    store_confirmed_sku(contract_number, payload, "HRC")
+
+
+def store_confirmed_sku(contract_number: str, payload: dict[str, Any], division: str = "") -> None:
+    division = (division or payload.get("division") or "HRC").strip().upper()
     memory = read_memory()
     confirmations = memory.setdefault("sku_confirmations", [])
     confirmations.append(
         {
             "timestamp": _utc_now(),
             "contract_number": normalise_contract_number(contract_number),
-            "division": "HRC",
+            "division": division,
             "details": payload,
         }
     )
     memory["sku_confirmations"] = confirmations[-200:]
-    memory["last_action"] = f"Confirmed HRC SKU details for contract {contract_number}"
+    memory["last_action"] = f"Confirmed {division} SKU details for contract {contract_number}"
     write_memory(memory)

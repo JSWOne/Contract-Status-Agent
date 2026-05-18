@@ -1970,3 +1970,199 @@ Fix:
 
 - The line helper now carries the contract number into the save/capture step.
 - If the line name is not visible in the page heading/body immediately after Save, it uses Salesforce global search for the contract number and selects the newest `Contract Line` style result, such as `00176235_10`.
+
+### HRC End-to-End Verification - 2026-05-15
+
+Status:
+
+- User verified the HRC flow is working fine for now.
+- Teams first card posts for HRC contract SKU selection with Material Type, SKU / Description, and Qty.
+- HRC confirmation card posts with the selected SKU details and HRC parameters from the Excel/Jira context.
+- Final **Confirm SKU Details** starts JSW Salesforce contract line creation.
+- JSW Salesforce HRC Contract Line Item creation is working.
+- Teams status handling is working after contract line creation and capture fallback.
+- Current deployed Cloud Run revision at last verification: `jsw-contract-logging-agent-00058-c9v`.
+
+Current state:
+
+- HRC path is considered working for now.
+- Continue with HRC-only scope before extending similar automation to other product types.
+
+## 29. CRCA SKU Flow Build Started - 2026-05-18
+
+Goal:
+
+- Add CRCA as the next SKU/Contract Line Item flow while keeping the working HRC flow unchanged.
+- Overall Teams journey remains the same as HRC:
+  1. User posts contract number to SKU bot.
+  2. Bot detects contract division from Contract Logging memory.
+  3. If division is `CRCA`, bot posts a CRCA SKU selection card.
+  4. User selects Material, SKU / Description, and Qty.
+  5. Bot fetches/prefills CRCA details from the master lookup response.
+  6. User confirms CRCA SKU details.
+  7. Local Salesforce helper logs the Contract Line Item in JSW Steel portal.
+  8. Bot posts the created Contract Line Item back to Teams.
+
+Mapping source:
+
+- User supplied `Mapping.csv`.
+- CRCA master workbook exists locally at:
+
+```text
+C:\Users\2751342\OneDrive - JSW\Power Automate\Contract Master Data\CRCA.xlsx
+```
+
+CRCA materials enabled:
+
+| Material | Product Name |
+|----------|--------------|
+| `S_CRCACF` | `CRCA Coil - (S_CRCACF)` |
+| `S_CRCASF` | `CRCA Sheet - (S_CRCASF)` |
+
+CRCA fields mapped:
+
+| Teams / Salesforce Field | CRCA Master Column |
+|--------------------------|--------------------|
+| Customer Order Category | `CUST ORDER` |
+| Eq. Specification Group | `EqSpecifGrp` |
+| Eq. Specification | `EqSpecifi` |
+| Eq. Sub Specification | `EqSub_Grade` |
+| End Application | `END_APPN` |
+| Customer Requested Date | Uses same Salesforce-safe date rule as HRC |
+| Width | `WIDTH` |
+| Thickness | `THICKNESS` |
+| Length | `LENGTH` for `S_CRCASF` only |
+| Thickness Tolerance Type | `THICK_TOL_TYPE` |
+| Edge Condition | `EDGE_CON` for `S_CRCACF` |
+| Oil Required | `OIL_REQ` |
+
+Code changes added locally:
+
+- `build_contract_card.py`
+  - Added CRCA material/product mapping.
+  - Added CRCA-specific second-card field layout.
+  - Existing HRC card builder now renders division-aware titles/stages, so HRC still renders as HRC and CRCA renders as CRCA.
+- `webhook_listener.py`
+  - SKU bot now supports `HRC` and `CRCA` divisions.
+  - `/sku-webhook`, `/sku-select-confirm`, `/sku-row-confirm`, and `/sku-details-confirm` reuse the same flow with division-aware lookup and card rendering.
+  - Salesforce line-data conversion now maps CRCA `thick_tol_type` and `oil_req`.
+- `salesforce_add_contract_line.py`
+  - Contract line helper now fills `Thickness Tolerance Type` and `Oil Required` when values are provided.
+  - Added local CLI samples:
+
+```powershell
+python "ContractSOAgent/Contract Logging Agent/Tools/salesforce_add_contract_line.py" --mode create-line --sample crca-coil --contract <CRCA_CONTRACT_NUMBER>
+python "ContractSOAgent/Contract Logging Agent/Tools/salesforce_add_contract_line.py" --mode create-line --sample crca-sheet --contract <CRCA_CONTRACT_NUMBER>
+```
+
+Local validation completed:
+
+- Python compile check passed:
+
+```powershell
+python -m compileall "ContractSOAgent/Contract Logging Agent/Tools"
+```
+
+- Dry function check confirmed:
+  - First card title/stage becomes `Add CRCA SKU Details` / `crca_sku_select`.
+  - Second card title/stage becomes `Confirm CRCA SKU Details` / `crca_sku_details`.
+  - CRCA line data maps product `CRCA Coil - (S_CRCACF)`.
+  - `THICK_TOL_TYPE` maps to `thick_tol_type`.
+  - `OIL_REQ` maps to `oil_req`.
+
+Pending before deployment:
+
+- Get a valid CRCA contract number for local visible Salesforce test.
+- Run local create-line test with `--sample crca-coil` first.
+- If Salesforce field labels/options differ, tune selectors locally.
+- Deploy to Cloud Run only after local Contract Line Item creation succeeds.
+
+### CRCA Local Contract Line Test - 2026-05-18
+
+Test input:
+
+| Field | Value |
+|-------|-------|
+| Jira Ticket | `O360-15802` |
+| Contract Number | `00176890` |
+| Division | `CRCA` |
+| Material | `S_CRCACF` |
+| Product Name | `CRCA Coil - (S_CRCACF)` |
+| Distribution Channel | `OEM` |
+
+Result:
+
+- Local Salesforce run created the CRCA Contract Line Item successfully.
+- Generated Contract Line Item:
+
+```text
+00176890_10
+```
+
+Fixes discovered during local CRCA test:
+
+- Supply Plant / Depot lookup opens a full `JSW Locations` modal for plant `1014`; the helper now clicks the visible `Tarapur Works` / `1014` result and waits for the modal to close before continuing.
+- Added plant mapping:
+
+```text
+1014 -> 1014 - Tarapur Works
+```
+
+- CRCA-specific fields now filled successfully:
+  - `Thickness Tolerance Type`
+  - `Oil Required`
+  - `Edge Condition`
+- Local CRCA sample `Customer Requested Date` must be within the contract end date. For contract `00176890`, the valid test date is `06/08/2026`.
+- Salesforce redirected back to the parent Contract page after Save, so the helper initially failed to capture the line name even though `Count of Contract Line Items = 1`.
+- Added Related-tab fallback capture: if the line name is not visible after Save and global search does not find it, the helper opens the Contract `Related` tab and reads the newest `00176890_<line>` value.
+
+Current CRCA state:
+
+- CRCA coil local line creation is validated.
+- Next work is to route the SKU bot CRCA confirmation path through this same helper and then run one end-to-end Teams-driven CRCA test before Cloud Run deployment.
+
+### Resolution Fix Before Portal Flows - 2026-05-18
+
+Issue:
+
+- Visible local Chrome could open at a smaller/shifted resolution before the Salesforce flow started.
+- This can move Salesforce modal fields/buttons and make selector behavior inconsistent.
+
+Fix:
+
+- `create_contract_in_portal.py` now uses the same resolution discipline as `salesforce_add_contract_line.py`.
+- Before any portal interaction, the agent forces:
+  - Chrome window size: `1920x1080`
+  - Playwright viewport: `1920x1080`
+  - Playwright screen: `1920x1080`
+  - device scale factor: `1`
+  - Chrome DevTools `Browser.setWindowBounds` at `left=0`, `top=0`
+  - Chrome window state: `maximized`
+  - browser launch flags: `--start-maximized`, `--start-fullscreen`
+  - Salesforce modal zoom: `0.9`
+  - Salesforce modal content constrained inside the viewport
+  - Salesforce modal footer pinned as sticky at the bottom so action buttons such as `Save` remain visible after scrolling through Plant Description
+
+Rule:
+
+- All local and Cloud Run Salesforce flows must fix the browser resolution before login/search/form interaction starts.
+- Contract creation and contract line-item creation must call the resolution/modal stabilizer before form fill and again before save.
+
+### Teams Testing Channel Decision - 2026-05-18
+
+Decision:
+
+- The separate `Contract logging - testing` channel is being removed.
+- Local and production-style Contract Logging tests will use the main `Contract logging` channel.
+
+Current local testing command:
+
+```powershell
+python "ContractSOAgent/Contract Logging Agent/Tools/run_contract_logging_agent.py" O360-15802 --create-contract --distribution-channel OEM --post-to-teams
+```
+
+Notes:
+
+- `run_contract_logging_agent.py` defaults `--teams-target` to `main`.
+- `TEAMS_CONTRACT_LOG_WEBHOOK_URL` remains the active Teams posting URL for Contract Logging cards.
+- The optional `--teams-target testing` code path still exists for future isolation, but it requires `TEAMS_CONTRACT_LOG_TEST_WEBHOOK_URL` to be configured before use.

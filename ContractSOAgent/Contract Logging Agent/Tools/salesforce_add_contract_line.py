@@ -172,6 +172,8 @@ def _launch_browser(p, force_headed: bool = False):
         headless=headless,
         slow_mo=_env_int("PLAYWRIGHT_SLOW_MO_MS", 0),
         args=[
+            "--start-maximized",
+            "--start-fullscreen",
             f"--window-size={PORTAL_WIDTH},{PORTAL_HEIGHT}",
             "--force-device-scale-factor=1",
             "--high-dpi-support=1",
@@ -207,9 +209,44 @@ def _fix_resolution(page) -> None:
                     "top": 0,
                     "width": PORTAL_WIDTH,
                     "height": PORTAL_HEIGHT,
-                    "windowState": "normal",
+                    "windowState": "maximized",
                 },
             },
+        )
+    except Exception:
+        pass
+    _stabilise_salesforce_modal(page)
+
+
+def _stabilise_salesforce_modal(page) -> None:
+    """Keep long Salesforce modals usable in headed/local runs."""
+    try:
+        page.evaluate(
+            """() => {
+                document.documentElement.style.zoom = '0.9';
+                document.body.style.zoom = '0.9';
+                const styleId = 'codex-salesforce-modal-fix';
+                if (!document.getElementById(styleId)) {
+                    const style = document.createElement('style');
+                    style.id = styleId;
+                    style.textContent = `
+                        .slds-modal__container, .uiModal .modal-container {
+                            max-height: calc(100vh - 12px) !important;
+                            height: calc(100vh - 12px) !important;
+                        }
+                        .slds-modal__content, .uiModal .modal-body {
+                            max-height: calc(100vh - 160px) !important;
+                        }
+                        .slds-modal__footer, .forceModalActionContainer {
+                            position: sticky !important;
+                            bottom: 0 !important;
+                            z-index: 20 !important;
+                            background: white !important;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+            }"""
         )
     except Exception:
         pass
@@ -313,6 +350,7 @@ def _click_exact_contract_search_result(page, contract_number: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _click_new_contract_line(page) -> None:
+    _fix_resolution(page)
     log.info("Clicking 'New Contract Line'")
     # Wait for contract page to render
     page.wait_for_timeout(4_000)
@@ -326,6 +364,7 @@ def _click_new_contract_line(page) -> None:
     btn.scroll_into_view_if_needed(timeout=5_000)
     btn.click(timeout=10_000)
     page.wait_for_timeout(3_000)
+    _fix_resolution(page)
     _screenshot(page, "04_form_opened")
     log.info("New Contract Line form opened")
 
@@ -335,6 +374,7 @@ def _click_new_contract_line(page) -> None:
 # ---------------------------------------------------------------------------
 
 def _fill_contract_line(page, data: dict, contract_number: str = "") -> str:
+    _fix_resolution(page)
     log.info("--- Filling contract line form ---")
 
     # 1. Product Name — click input, dropdown appears automatically, select matching option
@@ -419,6 +459,14 @@ def _fill_contract_line(page, data: dict, contract_number: str = "") -> str:
     _screenshot(page, "16b_length")
 
     # 12. Edge Condition — LWC combobox
+    _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
+    page.wait_for_timeout(1_000)
+    _screenshot(page, "16c_thick_tol_type")
+
+    _select_lwc_combobox(page, "Oil Required", data.get("oil_req", ""))
+    page.wait_for_timeout(1_000)
+    _screenshot(page, "16d_oil_required")
+
     _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
     page.wait_for_timeout(1_500)
     _screenshot(page, "17_edge_condition")
@@ -682,9 +730,11 @@ def _fill_supply_plant(page, value: str, plant_raw: str = "") -> None:
         page.wait_for_timeout(1_200)
 
         selected = _click_lookup_suggestion(page, value, plant_raw)
-        if selected:
+        if selected and not _supply_plant_lookup_modal_open(page):
             log.info("  Supply Plant selected from lookup suggestion")
             return
+        if selected:
+            log.info("  Supply Plant lookup opened full results; selecting exact row")
 
         for text in [
             f'Show more results for "{value}"',
@@ -698,18 +748,9 @@ def _fill_supply_plant(page, value: str, plant_raw: str = "") -> None:
             except Exception:
                 pass
 
-        # The search results appear as a table with columns: Description | Code | Type
-        # Find the row where Code cell exactly matches the plant code, then click the Description link
-        try:
-            # Find a <td> whose trimmed text equals the plant code, get its row, click the link
-            row = page.locator('tr').filter(
-                has=page.locator(f'td:text-is("{value}")')
-            ).first
-            row.locator('a').first.click(timeout=5_000)
+        if _select_supply_plant_result(page, value, plant_raw):
             log.info("  Supply Plant selected by code '%s'", value)
             return
-        except Exception:
-            pass
 
         # Fallback: click the first result link in the table
         try:
@@ -725,6 +766,60 @@ def _fill_supply_plant(page, value: str, plant_raw: str = "") -> None:
             log.warning("  Supply Plant fallback failed: %s", e2)
     except Exception as e:
         log.warning("  Supply Plant failed: %s", e)
+
+
+def _supply_plant_lookup_modal_open(page) -> bool:
+    try:
+        return page.locator('text=JSW Locations').first.is_visible(timeout=700)
+    except Exception:
+        return False
+
+
+def _select_supply_plant_result(page, value: str, plant_raw: str = "") -> bool:
+    """Select the exact Supply Plant result from the JSW Locations full lookup modal."""
+    plant_keyword = _plant_keyword(plant_raw or value)
+    if plant_keyword:
+        try:
+            page.locator("a").filter(
+                has_text=re.compile(re.escape(plant_keyword), re.IGNORECASE)
+            ).first.click(timeout=4_000, force=True)
+            page.wait_for_timeout(1_000)
+            if not _supply_plant_lookup_modal_open(page):
+                return True
+        except Exception:
+            pass
+    try:
+        selected = page.evaluate(
+            """({ code, keyword }) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const rows = Array.from(document.querySelectorAll('tr, .slds-grid, .slds-listbox__item, div'));
+                for (const row of rows) {
+                    if (!visible(row)) continue;
+                    const text = norm(row.innerText || row.textContent);
+                    const hasCode = code && new RegExp(`(^|\\\\s)${code}(\\\\s|$)`).test(text);
+                    const hasKeyword = keyword && text.toLowerCase().includes(keyword.toLowerCase());
+                    if (hasCode || hasKeyword) {
+                        const link = Array.from(row.querySelectorAll('a')).find(visible);
+                        const target = link || row;
+                        target.click();
+                        return true;
+                    }
+                }
+                return false;
+            }""",
+            {"code": str(value or "").strip(), "keyword": plant_keyword},
+        )
+        if selected:
+            page.wait_for_timeout(1_000)
+            return not _supply_plant_lookup_modal_open(page)
+    except Exception:
+        pass
+    return False
 
 
 def _input_by_label(page, label: str):
@@ -934,6 +1029,7 @@ def _fill_date_by_label(page, label: str, value: str) -> None:
 
 def _save(page, contract_number: str = "") -> str:
     """Click Save, wait for the detail page, then return the contract line name (e.g. '00170850_20')."""
+    _fix_resolution(page)
     log.info("Clicking Save")
     try:
         # Wait for any animations/re-renders to settle before locating Save
@@ -988,6 +1084,9 @@ def _save(page, contract_number: str = "") -> str:
     if not line_name and contract_number:
         line_name = _find_latest_contract_line_via_search(page, contract_number)
 
+    if not line_name and contract_number:
+        line_name = _find_latest_contract_line_via_related_tab(page, contract_number)
+
     if line_name:
         log.info("Contract line name: %s", line_name)
     else:
@@ -1021,6 +1120,26 @@ def _find_latest_contract_line_via_search(page, contract_number: str) -> str:
             return latest
     except Exception as exc:
         log.warning("Contract line search fallback failed: %s", exc)
+    return ""
+
+
+def _find_latest_contract_line_via_related_tab(page, contract_number: str) -> str:
+    """If Salesforce returns to the parent contract, read the latest line from Related."""
+    try:
+        log.info("Trying Related tab fallback for latest Contract Line under %s", contract_number)
+        page.locator("a, button, span").filter(
+            has_text=re.compile(r"^Related$", re.IGNORECASE)
+        ).first.click(timeout=10_000, force=True)
+        page.wait_for_timeout(5_000)
+        _screenshot(page, "21_related_tab_fallback", full_page=True)
+        body_text = page.inner_text("body", timeout=5_000)
+        candidates = re.findall(rf"\b({re.escape(contract_number)}_\d+)\b", body_text)
+        if candidates:
+            latest = max(set(candidates), key=lambda x: int(x.split("_")[1]))
+            log.info("Latest Contract Line from Related tab fallback: %s", latest)
+            return latest
+    except Exception as exc:
+        log.warning("Contract line Related tab fallback failed: %s", exc)
     return ""
 
 
@@ -1129,9 +1248,16 @@ if __name__ == "__main__":
         default=300,
         help="How long to keep the visible browser open in open-contract mode",
     )
+    parser.add_argument(
+        "--sample",
+        choices=["hrc", "crca-coil", "crca-sheet"],
+        default="hrc",
+        help="Sample line data to use in create-line mode",
+    )
     args = parser.parse_args()
 
-    test_data = {
+    samples = {
+        "hrc": {
         "sku_description":         "10X2000X6100.-P1-2062_2011-E350BR",
         "product_name":            "HR Sheet & Plate - (S_HRCTLF)",
         "customer_order_category": "STD",
@@ -1146,7 +1272,49 @@ if __name__ == "__main__":
         "thickness":               "10.000",
         "length":                  "6100.000",
         "edge_con":                "ME",
+        "thick_tol_type":          "",
+        "oil_req":                 "",
+        },
+        "crca-coil": {
+            "division":                "CRCA",
+            "sku_description":         "0.35X1250-P1-CR2_SKIN_P-O2",
+            "product_name":            "CRCA Coil - (S_CRCACF)",
+            "customer_order_category": "STD",
+            "eq_specif_grp":           "BIS",
+            "eq_specifi":              "513_2016",
+            "eq_sub_grade":            "CR2_SKIN_PASS",
+            "end_appn":                "GE",
+            "order_qty":               "10",
+            "plant_code":              "1014 - Tarapur Works",
+            "cust_req_date":           "06/08/2026",
+            "width":                   "1250.000",
+            "thickness":               "0.350",
+            "length":                  "",
+            "edge_con":                "TE",
+            "thick_tol_type":          "BILATERAL",
+            "oil_req":                 "Y",
+        },
+        "crca-sheet": {
+            "division":                "CRCA",
+            "sku_description":         "0.35X1250-P1-CR2_SKIN_P-O2",
+            "product_name":            "CRCA Sheet - (S_CRCASF)",
+            "customer_order_category": "STD",
+            "eq_specif_grp":           "BIS",
+            "eq_specifi":              "513_2016",
+            "eq_sub_grade":            "CR2_SKIN_PASS",
+            "end_appn":                "GE",
+            "order_qty":               "10",
+            "plant_code":              "1014 - Tarapur Works",
+            "cust_req_date":           "06/08/2026",
+            "width":                   "1250.000",
+            "thickness":               "0.350",
+            "length":                  "2500.000",
+            "edge_con":                "",
+            "thick_tol_type":          "BILATERAL",
+            "oil_req":                 "Y",
+        },
     }
+    test_data = samples[args.sample]
 
     if args.mode == "open-contract":
         open_contract_for_training(args.contract, pause_seconds=args.pause_seconds)

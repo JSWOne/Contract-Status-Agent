@@ -1,6 +1,6 @@
 # ContractSOAgent — Master Orchestrator
 > **JSW One Platforms | Salesforce Automation System**
-> Version: 1.0.0 | Owner: Milind Kumar | Last Updated: 2026-04-29
+> Version: 1.1.0 | Owner: Milind Kumar | Last Updated: 2026-05-18
 
 ---
 
@@ -13,6 +13,24 @@ This agent coordinates a network of specialised sub-agents (Skills) to:
 - Track and report real-time statuses of Contracts and SOs.
 - Create and manage Jira tickets for exceptions, failures, and manual review items.
 - Self-heal from errors using structured Logs and persistent Memory.
+
+The current production purpose is to reduce manual work across the Contract/SO lifecycle by joining Microsoft Teams, Jira, Salesforce, Power Automate, Excel, Cloud Run, and persistent memory into one operating system.
+
+In practical terms, the project is trying to make three things happen reliably:
+
+- Turn a user-confirmed Jira request into a Salesforce Contract without manual portal entry.
+- Keep the contract tracker and Teams channel synchronized with live Salesforce Contract status.
+- Capture failures and Jira-created SO requests in a controlled way without flooding Teams with unrelated Jira tickets.
+
+### Current Agent Objectives
+
+| Agent | Single Objective | What It Achieves |
+|-------|------------------|------------------|
+| **Contract Logging Agent** | Create a new Salesforce Contract from a Teams-confirmed Jira `O360` ticket. | Runs the Teams confirmation card flow, reads/prepares ticket details, fills the JSW Steel Community Salesforce portal, extracts the generated Contract Number, and posts the result back to Teams. |
+| **Contract Status Agent** | Keep Salesforce Contract status visible and synchronized. | Runs every 15 minutes, scrapes recent Salesforce Contracts, captures approval-stage details, updates the OneDrive Excel tracker, compares against the previous snapshot, and posts Teams cards only for status changes. |
+| **Jira Ticket Agent** | Centralize incident handling and Jira-created SO Request Teams notifications. | Creates, updates, and closes Jira tickets for agent failures, and posts Jira-created Teams cards only when Jira Request Type is exactly `SO Request`; `Order support` and other request types are skipped. |
+
+The SO Logging Agent and SO Status Agent remain part of the broader architecture, but the current production focus is Contract Logging, Contract Status, and Jira Ticket Agent.
 
 ---
 
@@ -60,11 +78,11 @@ ContractSOAgent/
 
 | # | Skill Name | Skill File | Primary Responsibility |
 |---|------------|------------|------------------------|
-| 1 | **Contract Logging Agent** | `ContractLoggingAgent.md` | Fetch contract data from source and create/update Contract records in Salesforce |
-| 2 | **Contract Status Agent** | `ContractStatusAgent.md` | Poll and report the live status of Contracts in Salesforce |
+| 1 | **Contract Logging Agent** | `ContractLoggingAgent.md` | Create Salesforce Contracts from Teams-confirmed Jira `O360` tickets and post Contract Number results back to Teams |
+| 2 | **Contract Status Agent** | `ContractStatusAgent.md` | Poll Salesforce Contracts, update the Excel tracker, and notify Teams when contract statuses change |
 | 3 | **SO Logging Agent** | `SOLoggingAgent.md` | Fetch Sales Order data and create/update SO records in Salesforce |
 | 4 | **SO Status Agent** | `SOStatusAgent.md` | Poll and report the live status of Sales Orders in Salesforce |
-| 5 | **Jira Ticket Agent** | `JiraTicketAgent.md` | Create, update, and close Jira tickets for failures, exceptions, and review items |
+| 5 | **Jira Ticket Agent** | `JiraTicketAgent.md` | Create/update/close Jira incident tickets and post Teams cards only for Jira-created `SO Request` tickets |
 
 ---
 
@@ -239,6 +257,10 @@ START
 - All `PATCH` / `DELETE` operations require a confirmation flag in the tool's config.
 - Dry-run mode must be available in every tool via a `DRY_RUN = True` flag at the top of the file.
 
+### Salesforce Browser Resolution Rule
+- Contract creation and contract line-item creation flows must start Chrome in a fixed maximized `1920x1080` viewport before any portal interaction.
+- Salesforce modal pages must apply the modal stabilizer before form fill and before save, so footer action buttons such as `Save` remain visible after scrolling through Plant Description or other long sections.
+
 ---
 
 ## 10. Rollout Phases
@@ -246,12 +268,12 @@ START
 | Phase | Scope | Status |
 |-------|-------|--------|
 | Phase 0 | Folder structure + ContractSOAgent.md scaffolding | ✅ Done |
-| Phase 1 | Contract Logging Agent — Tools + Memory + Logs | 🔲 Pending |
-| Phase 2 | Contract Status Agent — Tools + Memory + Logs | 🔲 Pending |
+| Phase 1 | Contract Logging Agent — Teams confirmation, Salesforce contract creation, Teams result cards | ✅ Live on GCP |
+| Phase 2 | Contract Status Agent — Salesforce scrape, Excel tracker sync, Teams status-change cards | ✅ Live on GCP + Scheduler enabled |
 | Phase 3 | SO Logging Agent — Tools + Memory + Logs | 🔲 Pending |
 | Phase 4 | SO Status Agent — Tools + Memory + Logs | 🔲 Pending |
-| Phase 5 | Jira Ticket Agent — Tools + Memory + Logs | 🔲 Pending |
-| Phase 6 | End-to-end integration test + n8n wiring | 🔲 Pending |
+| Phase 5 | Jira Ticket Agent — Jira incident tools + SO Request-only Teams notification filter | ✅ Live on GCP |
+| Phase 6 | End-to-end integration test + n8n/Power Automate wiring | 🔲 In progress |
 
 ---
 
@@ -280,7 +302,7 @@ When beginning development on any sub-agent skill, follow this checklist:
 | Project Owner | Milind Kumar |
 | Organisation | JSW One Platforms |
 | Salesforce Org | `jswoneplatforms.my.salesforce.com` |
-| Orchestrator Version | 1.0.0 |
+| Orchestrator Version | 1.1.0 |
 | Architecture Style | Agentic Multi-Skill (Hierarchical Orchestrator Pattern) |
 
 ---

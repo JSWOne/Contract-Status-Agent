@@ -23,6 +23,92 @@ DIVISION_PRODUCTS = {
     "ZM":           ["ZM Coil - (S_ZMCF)"],
 }
 
+SKU_PRODUCT_BY_MATERIAL = {
+    "HRC": {
+        "S_HRCF": "HR Coil - (S_HRCF)",
+        "S_HRCTLF": "HR Sheet & Plate - (S_HRCTLF)",
+    },
+    "CRCA": {
+        "S_CRCACF": "CRCA Coil - (S_CRCACF)",
+        "S_CRCASF": "CRCA Sheet - (S_CRCASF)",
+    },
+}
+
+SKU_DETAIL_FIELDS = {
+    "HRC": {
+        "default": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("rh_req", "RH REQ"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("edge_con", "Edge Condition"),
+        ],
+        "S_HRCTLF": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("rh_req", "RH REQ"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("length", "Length"),
+            ("edge_con", "Edge Condition"),
+        ],
+    },
+    "CRCA": {
+        "default": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("oil_req", "Oil Required"),
+        ],
+        "S_CRCACF": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("edge_con", "Edge Condition"),
+            ("oil_req", "Oil Required"),
+        ],
+        "S_CRCASF": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("length", "Length"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("oil_req", "Oil Required"),
+        ],
+    },
+}
+
 
 def prepare_contract_details(ticket: dict) -> dict:
     fields = ticket.get("custom_fields", {})
@@ -415,9 +501,9 @@ def build_hrc_sku_line_created_card(contract_number: str, line_name: str, detail
 
 
 def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
-    """First HRC SKU card: material, SKU/description, and quantity."""
+    """First SKU card: material, SKU/description, and quantity."""
     contract_number = context.get("contract_number", "")
-    division = context.get("division", "HRC")
+    division = (context.get("division") or "HRC").strip().upper()
     materials = lookup.get("materials") or _materials_from_skus(lookup.get("skus", []))
     skus = lookup.get("skus") or lookup.get("descriptions") or lookup.get("rows") or []
     if not materials:
@@ -426,7 +512,10 @@ def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
     sku_choices = _sku_choices(skus)
 
     if not material_choices:
-        material_choices = [{"title": "S_HRCF", "value": "S_HRCF"}, {"title": "S_HRCTLF", "value": "S_HRCTLF"}]
+        material_choices = [
+            {"title": material, "value": material}
+            for material in SKU_PRODUCT_BY_MATERIAL.get(division, SKU_PRODUCT_BY_MATERIAL["HRC"])
+        ]
 
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -435,7 +524,7 @@ def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
         "body": [
             {
                 "type": "TextBlock",
-                "text": f"Add HRC SKU Details - Contract {contract_number}",
+                "text": f"Add {division} SKU Details - Contract {contract_number}",
                 "weight": "Bolder",
                 "size": "Medium",
                 "color": "Accent",
@@ -475,7 +564,7 @@ def build_hrc_sku_selection_card(context: dict, lookup: dict) -> dict:
             {
                 "type": "Action.Submit",
                 "title": "Confirm",
-                "data": {"contract_number": contract_number, "stage": "hrc_sku_select"},
+                "data": {"contract_number": contract_number, "stage": f"{division.lower()}_sku_select"},
             }
         ],
     }
@@ -489,7 +578,7 @@ def build_hrc_sku_row_choice_card(context: dict, selection: dict, rows: list[dic
         "body": [
             {
                 "type": "TextBlock",
-                "text": f"Multiple HRC rows matched contract {context.get('contract_number', '')}",
+                "text": f"Multiple {(context.get('division') or 'SKU').upper()} rows matched contract {context.get('contract_number', '')}",
                 "weight": "Bolder",
                 "size": "Medium",
                 "color": "Accent",
@@ -526,11 +615,12 @@ def build_hrc_sku_details_card(
     request_id: str,
 ) -> dict:
     material = selection.get("material", "")
-    fields = _hrc_detail_fields(material)
+    division = (context.get("division") or "HRC").strip().upper()
+    fields = _sku_detail_fields(division, material)
     body = [
         {
             "type": "TextBlock",
-            "text": f"Confirm HRC SKU Details - Contract {context.get('contract_number', '')}",
+            "text": f"Confirm {division} SKU Details - Contract {context.get('contract_number', '')}",
             "weight": "Bolder",
             "size": "Medium",
             "color": "Accent",
@@ -544,7 +634,7 @@ def build_hrc_sku_details_card(
         hidden_text("request_id", request_id),
         hidden_text("contract_number", context.get("contract_number", "")),
         hidden_text("ticket_id", context.get("ticket_id", "")),
-        hidden_text("division", context.get("division", "HRC")),
+        hidden_text("division", division),
         hidden_text("bp_code", context.get("sold_to_party", "")),
         hidden_text("sp_code", context.get("ship_to_party", "")),
         hidden_text("material", material),
@@ -563,7 +653,7 @@ def build_hrc_sku_details_card(
             {
                 "type": "Action.Submit",
                 "title": "Confirm SKU Details",
-                "data": {"request_id": request_id, "stage": "hrc_sku_details"},
+                "data": {"request_id": request_id, "stage": f"{division.lower()}_sku_details"},
             }
         ],
     }
@@ -592,8 +682,11 @@ def build_hrc_sku_confirmed_card(contract_number: str, details: dict, context: d
         ("Width", details.get("width")),
         ("Thickness", details.get("thickness")),
         ("Length", details.get("length")),
+        ("Thickness Tolerance Type", details.get("thick_tol_type")),
         ("Edge Condition", details.get("edge_con")),
+        ("Oil Required", details.get("oil_req")),
     ]
+    division = (context.get("division") or details.get("division") or "HRC").strip().upper()
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -601,7 +694,7 @@ def build_hrc_sku_confirmed_card(contract_number: str, details: dict, context: d
         "body": [
             {
                 "type": "TextBlock",
-                "text": f"You confirmed the following HRC SKU details for Contract - {contract_number}",
+                "text": f"You confirmed the following {division} SKU details for Contract - {contract_number}",
                 "weight": "Bolder",
                 "size": "Medium",
                 "color": "Good",
@@ -732,23 +825,15 @@ def _row_get(row: dict, *keys: str) -> str:
     return ""
 
 
+def _sku_detail_fields(division: str, material: str) -> list[tuple[str, str]]:
+    division_key = str(division or "HRC").strip().upper()
+    material_key = str(material or "").strip().upper()
+    fields_by_material = SKU_DETAIL_FIELDS.get(division_key, SKU_DETAIL_FIELDS["HRC"])
+    return fields_by_material.get(material_key) or fields_by_material["default"]
+
+
 def _hrc_detail_fields(material: str) -> list[tuple[str, str]]:
-    fields = [
-        ("customer_order_category", "Customer Order Category"),
-        ("eq_specif_grp", "Eq. Specification Group"),
-        ("eq_specifi", "Eq. Specification"),
-        ("eq_sub_grade", "Eq. Sub Specification"),
-        ("end_appn", "End Application"),
-        ("rh_req", "RH REQ"),
-        ("plant_code", "Supply Plant / Depot"),
-        ("cust_req_date", "Customer Requested Date"),
-        ("width", "Width"),
-        ("thickness", "Thickness"),
-    ]
-    if str(material or "").strip().upper() == "S_HRCTLF":
-        fields.append(("length", "Length"))
-    fields.append(("edge_con", "Edge Condition"))
-    return fields
+    return _sku_detail_fields("HRC", material)
 
 
 def strip_leading_zeroes(value: str) -> str:

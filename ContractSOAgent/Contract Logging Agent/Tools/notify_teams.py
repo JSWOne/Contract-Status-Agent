@@ -16,10 +16,12 @@ load_dotenv(Path(__file__).with_name(".env"))
 log = logging.getLogger(__name__)
 
 
-def post_to_contract_log(payload: dict) -> bool:
-    webhook_url = os.environ.get("TEAMS_CONTRACT_LOG_WEBHOOK_URL", "").strip()
+def post_to_contract_log(payload: dict, target: str = "main") -> bool:
+    target = (target or "main").strip().lower()
+    env_name = "TEAMS_CONTRACT_LOG_TEST_WEBHOOK_URL" if target in {"test", "testing"} else "TEAMS_CONTRACT_LOG_WEBHOOK_URL"
+    webhook_url = os.environ.get(env_name, "").strip()
     if not webhook_url:
-        raise RuntimeError("TEAMS_CONTRACT_LOG_WEBHOOK_URL is not set")
+        raise RuntimeError(f"{env_name} is not set")
 
     last_exc = None
     for attempt in range(1, 5):
@@ -41,12 +43,12 @@ def post_to_contract_log(payload: dict) -> bool:
     raise RuntimeError(f"Could not post to Teams/Power Automate after retries: {last_exc}") from last_exc
 
 
-def post_text(text: str) -> bool:
-    return post_to_contract_log({"text": text})
+def post_text(text: str, target: str = "main") -> bool:
+    return post_to_contract_log({"text": text}, target=target)
 
 
-def post_card(card: dict) -> bool:
-    return post_to_contract_log({"adaptive_card": card})
+def post_card(card: dict, target: str = "main") -> bool:
+    return post_to_contract_log({"adaptive_card": card}, target=target)
 
 
 def post_to_sku_log(payload: dict) -> bool:

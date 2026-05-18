@@ -21,6 +21,7 @@ from notify_teams import post_card
 def run(
     ticket_id: str,
     post_to_teams: bool = False,
+    teams_target: str = "main",
     navigate: bool = False,
     create_contract: bool = False,
     overrides: dict | None = None,
@@ -44,7 +45,7 @@ def run(
     }
 
     if post_to_teams:
-        post_card(confirmation_card)
+        post_card(confirmation_card, target=teams_target)
         result["teams_card_posted"] = True
 
     if navigate:
@@ -52,13 +53,13 @@ def run(
         result["navigation"] = nav
         audit_card = build_audit_card(details)
         if post_to_teams:
-            post_card(audit_card)
+            post_card(audit_card, target=teams_target)
 
     if create_contract:
         contract_number = create_contract_in_portal(details, ticket_id)
         result["contract_number"] = contract_number
         if post_to_teams:
-            post_card(build_contract_created_card(ticket_id, contract_number))
+            post_card(build_contract_created_card(ticket_id, contract_number), target=teams_target)
 
     return result
 
@@ -67,6 +68,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Test Contract Logging Phase 1 locally.")
     parser.add_argument("ticket_id", nargs="?", help="Jira ticket id, for example O360-15342")
     parser.add_argument("--post-to-teams", action="store_true", help="Post card to Teams")
+    parser.add_argument(
+        "--teams-target",
+        choices=["testing", "main"],
+        default="main",
+        help="Teams destination for local test posts. Default: main.",
+    )
     parser.add_argument("--navigate", action="store_true", help="Login and navigate to Contract page")
     parser.add_argument(
         "--create-contract",
@@ -104,6 +111,7 @@ def main() -> None:
             run(
                 args.ticket_id.upper(),
                 post_to_teams=args.post_to_teams,
+                teams_target=args.teams_target,
                 navigate=args.navigate,
                 create_contract=args.create_contract,
                 overrides={

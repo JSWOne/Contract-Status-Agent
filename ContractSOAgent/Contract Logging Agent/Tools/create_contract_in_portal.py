@@ -23,7 +23,9 @@ load_dotenv(Path(__file__).with_name(".env"), override=True)
 
 log = logging.getLogger(__name__)
 DEBUG_DIR = Path(__file__).parent.parent / ".tmp"
-PORTAL_VIEWPORT = {"width": 1920, "height": 1080}
+PORTAL_WIDTH = 1920
+PORTAL_HEIGHT = 1080
+PORTAL_VIEWPORT = {"width": PORTAL_WIDTH, "height": PORTAL_HEIGHT}
 CONTRACTS_LIST_URL = os.getenv(
     "JSW_CONTRACTS_URL",
     "https://jswsteel.my.site.com/jswone/s/recordlist/Contract/Default",
@@ -90,9 +92,19 @@ def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=headless,
-            args=["--start-maximized", "--window-size=1920,1080"],
+            args=[
+                "--start-maximized",
+                "--start-fullscreen",
+                f"--window-size={PORTAL_WIDTH},{PORTAL_HEIGHT}",
+                "--force-device-scale-factor=1",
+                "--high-dpi-support=1",
+            ],
         )
-        page = browser.new_page(viewport=PORTAL_VIEWPORT)
+        page = browser.new_page(
+            viewport=PORTAL_VIEWPORT,
+            screen=PORTAL_VIEWPORT,
+            device_scale_factor=1,
+        )
         try:
             ensure_portal_viewport(page)
             print(f"[contract-create] {ticket_id}: login started", flush=True)
@@ -131,9 +143,19 @@ def open_new_contract_for_recording(hold_seconds: int = 1800, inspector: bool = 
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
-            args=["--start-maximized", "--window-size=1920,1080"],
+            args=[
+                "--start-maximized",
+                "--start-fullscreen",
+                f"--window-size={PORTAL_WIDTH},{PORTAL_HEIGHT}",
+                "--force-device-scale-factor=1",
+                "--high-dpi-support=1",
+            ],
         )
-        page = browser.new_page(viewport=PORTAL_VIEWPORT)
+        page = browser.new_page(
+            viewport=PORTAL_VIEWPORT,
+            screen=PORTAL_VIEWPORT,
+            device_scale_factor=1,
+        )
         try:
             ensure_portal_viewport(page)
             login(page)
@@ -151,9 +173,71 @@ def open_new_contract_for_recording(hold_seconds: int = 1800, inspector: bool = 
 
 
 def ensure_portal_viewport(page) -> None:
-    """Keep Salesforce modal layout stable before filling fields."""
+    """Keep Salesforce modal layout stable before any portal interaction."""
     try:
         page.set_viewport_size(PORTAL_VIEWPORT)
+    except Exception:
+        pass
+    try:
+        cdp = page.context.new_cdp_session(page)
+        window = cdp.send("Browser.getWindowForTarget")
+        cdp.send(
+            "Browser.setWindowBounds",
+            {
+                "windowId": window["windowId"],
+                "bounds": {
+                    "left": 0,
+                    "top": 0,
+                    "width": PORTAL_WIDTH,
+                    "height": PORTAL_HEIGHT,
+                    "windowState": "maximized",
+                },
+            },
+        )
+    except Exception:
+        pass
+    stabilise_salesforce_modal(page)
+
+
+def stabilise_salesforce_modal(page) -> None:
+    try:
+        page.evaluate(
+            """() => {
+                document.documentElement.style.zoom = '0.9';
+                document.body.style.zoom = '0.9';
+                const styleId = 'codex-salesforce-modal-fix';
+                if (!document.getElementById(styleId)) {
+                    const style = document.createElement('style');
+                    style.id = styleId;
+                    style.textContent = `
+                        .slds-modal__container, .uiModal .modal-container {
+                            max-height: calc(100vh - 12px) !important;
+                            height: calc(100vh - 12px) !important;
+                        }
+                        .slds-modal__content, .uiModal .modal-body {
+                            max-height: calc(100vh - 160px) !important;
+                        }
+                        .slds-modal__footer, .forceModalActionContainer {
+                            position: sticky !important;
+                            bottom: 0 !important;
+                            z-index: 20 !important;
+                            background: white !important;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+            }"""
+        )
+    except Exception:
+        pass
+    try:
+        page.evaluate(
+            """({ width, height }) => {
+                window.moveTo(0, 0);
+                window.resizeTo(width, height);
+            }""",
+            PORTAL_VIEWPORT,
+        )
     except Exception:
         pass
 

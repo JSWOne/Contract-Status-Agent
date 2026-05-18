@@ -2166,3 +2166,194 @@ Notes:
 - `run_contract_logging_agent.py` defaults `--teams-target` to `main`.
 - `TEAMS_CONTRACT_LOG_WEBHOOK_URL` remains the active Teams posting URL for Contract Logging cards.
 - The optional `--teams-target testing` code path still exists for future isolation, but it requires `TEAMS_CONTRACT_LOG_TEST_WEBHOOK_URL` to be configured before use.
+
+### CRCA SKU Flow Cloud Run Deployment - 2026-05-18
+
+Deployment:
+
+- Commit deployed: `25dde4f` (`Add CRCA SKU line flow`)
+- Cloud Build trigger: `jsw-contract-logging-agent-deploy`
+- Cloud Build status: `SUCCESS`
+- Cloud Run service: `jsw-contract-logging-agent`
+- Cloud Run revision: `jsw-contract-logging-agent-00059-65r`
+- Health check: `GET /health` returned `200 OK`
+
+Scope:
+
+- Added CRCA SKU card and Contract Line Item path to the existing Contract Logging service.
+- Kept HRC stages and HRC parameter mapping unchanged:
+  - `hrc_sku_select`
+  - `hrc_sku_details`
+- Added CRCA stages:
+  - `crca_sku_select`
+  - `crca_sku_details`
+
+Next test:
+
+- Use the main `Contract logging` Teams channel.
+- Post/select the CRCA contract flow for `O360-15802` / contract `00176890`.
+- Confirm the first SKU card, then the CRCA details card, then verify the Salesforce Contract Line Item is created.
+
+### CRCA Teams Test Finding - 2026-05-18
+
+Test:
+
+- User created a fresh CRCA/OEM contract from Jira `O360-15802`.
+- Cloud Run created contract:
+
+```text
+00176967
+```
+
+- Teams main `Contract logging` channel then received the first SKU card:
+
+```text
+Add CRCA SKU Details - Contract 00176967
+```
+
+Observed:
+
+- Card context was correct:
+  - Division: `CRCA`
+  - Jira Ticket: `O360-15802`
+  - B P Code: `0040007100`
+  - S P Code: `0040028756`
+  - SHIP Plant Code: `1014`
+- `Material Type` showed CRCA fallback material `S_CRCACF`.
+- `SKU / Description` rendered as a blank text box instead of a dropdown.
+
+Root cause:
+
+- The deployed service still calls `HRC_MASTER_LOOKUP_URL`.
+- That URL points to the existing Power Automate flow named `HRC Master Lookup API`.
+- For CRCA input, the lookup returned no rows:
+
+```text
+materials_count = 0
+skus_count = 0
+rows_count = 0
+```
+
+- Because `skus` was empty, the Adaptive Card builder correctly fell back from `Input.ChoiceSet` to `Input.Text` for `SKU / Description`.
+
+Decision:
+
+- Do not continue the CRCA card test by manually typing SKU values.
+- Create a separate Power Automate flow named `CRCA Master Lookup API`.
+- Keep HRC untouched by routing:
+  - `HRC` -> `HRC_MASTER_LOOKUP_URL`
+  - `CRCA` -> `CRCA_MASTER_LOOKUP_URL`
+
+Required CRCA Power Automate behavior:
+
+- Trigger: manual HTTP request.
+- It must accept the same payload shape as the HRC lookup helper.
+- It must read the CRCA Excel master file/table.
+
+Expected request for SKU choices:
+
+```json
+{
+  "action": "get_sku_choices",
+  "division": "CRCA",
+  "bp_code": "0040007100",
+  "sp_code": "0040028756",
+  "ship_plant_code": "1014",
+  "ship_plant": "1014",
+  "plant_code": "1014"
+}
+```
+
+Expected response for SKU choices:
+
+```json
+{
+  "status": "success",
+  "materials": ["S_CRCACF"],
+  "skus": [
+    {
+      "material": "S_CRCACF",
+      "description": "0.35X1250-P1-CR2_SKIN_P-O2"
+    }
+  ]
+}
+```
+
+Expected request for SKU details:
+
+```json
+{
+  "action": "get_sku_details",
+  "division": "CRCA",
+  "bp_code": "0040007100",
+  "sp_code": "0040028756",
+  "ship_plant_code": "1014",
+  "material": "S_CRCACF",
+  "description": "0.35X1250-P1-CR2_SKIN_P-O2"
+}
+```
+
+Expected response for SKU details:
+
+```json
+{
+  "status": "success",
+  "customer_order_category": "STD",
+  "eq_specif_grp": "BIS",
+  "eq_specifi": "513_2016",
+  "eq_sub_grade": "CR2_SKIN_PASS",
+  "end_appn": "GE",
+  "plant_code": "1014",
+  "cust_req_date": "06/08/2026",
+  "width": "1250.000",
+  "thickness": "0.350",
+  "thick_tol_type": "BILATERAL",
+  "edge_con": "TE",
+  "oil_req": "Y"
+}
+```
+
+Next implementation step:
+
+- After the user creates/saves the CRCA Power Automate flow and shares its HTTP URL, add `CRCA_MASTER_LOOKUP_URL` to Cloud Run and update `hrc_master_lookup.py` to choose the lookup URL by division.
+
+### CRCA Master Lookup URL Wiring - 2026-05-18
+
+Update:
+
+- User created the new Power Automate flow `CRCA Master Lookup API`.
+- Added Cloud Run environment variable:
+
+```text
+CRCA_MASTER_LOOKUP_URL
+```
+
+- Verified Cloud Run env var contains the full signed URL, including `sp`, `sv`, and `sig`.
+- New env-var-only Cloud Run revision after configuration:
+
+```text
+jsw-contract-logging-agent-00062-wlx
+```
+
+- Health check returned `200 OK`.
+
+Code change:
+
+- `hrc_master_lookup.py` now chooses lookup URL by division:
+  - `CRCA` -> `CRCA_MASTER_LOOKUP_URL`
+  - all other supported/default lookup calls -> `HRC_MASTER_LOOKUP_URL`
+
+Current PA flow test result:
+
+- The CRCA flow URL is reachable, but its current test response still returns empty lookup arrays:
+
+```text
+materials_count = 0
+skus_count = 0
+rows_count = 0
+```
+
+Meaning:
+
+- Cloud Run wiring is ready.
+- The CRCA Power Automate flow still needs its Excel filter/Select/Response logic corrected so it returns CRCA rows from `CRCA.xlsx`.

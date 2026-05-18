@@ -277,6 +277,53 @@ START
 
 ---
 
+## 10.1 Current CRCA Extension Status - 2026-05-18
+
+The Contract Logging Agent has been extended beyond the original working HRC SKU path to support CRCA contract line-item creation.
+
+Current status:
+
+- CRCA code path is deployed on Cloud Run revision `jsw-contract-logging-agent-00059-65r`.
+- HRC remains isolated on its existing SKU stages:
+  - `hrc_sku_select`
+  - `hrc_sku_details`
+- CRCA uses separate SKU stages:
+  - `crca_sku_select`
+  - `crca_sku_details`
+- Local Salesforce CRCA line creation was validated on contract `00176890`; generated line item `00176890_10`.
+- A later Teams test created CRCA contract `00176967` from Jira `O360-15802`.
+
+Current blocker:
+
+- The first CRCA SKU card appears in Teams, but `SKU / Description` is a blank text box instead of a dropdown.
+- Root cause: Cloud Run still calls the existing `HRC_MASTER_LOOKUP_URL`, which points to Power Automate flow `HRC Master Lookup API`.
+- That HRC lookup flow returns no CRCA rows, so no SKU choices are available for the Teams card.
+
+Decision:
+
+- Create a separate Power Automate flow named `CRCA Master Lookup API`.
+- Add a new Cloud Run env var `CRCA_MASTER_LOOKUP_URL`.
+- Route lookup calls by division:
+  - `HRC` -> `HRC_MASTER_LOOKUP_URL`
+  - `CRCA` -> `CRCA_MASTER_LOOKUP_URL`
+
+Latest update:
+
+- `CRCA_MASTER_LOOKUP_URL` has been added to Cloud Run.
+- `hrc_master_lookup.py` now selects the Power Automate lookup URL by division.
+- Cloud Run env-var configuration revision `jsw-contract-logging-agent-00062-wlx` is healthy.
+- The CRCA PA flow is reachable, but currently still returns zero `materials`, zero `skus`, and zero `rows`; the PA filter/Select/Response logic must be corrected before Teams will show the SKU dropdown.
+
+Next test after CRCA PA URL is configured:
+
+1. Post CRCA contract number in the main `Contract logging` Teams channel.
+2. Confirm the first CRCA SKU selection card.
+3. Confirm the second CRCA details card.
+4. Verify Salesforce Contract Line Item creation.
+5. Run one HRC regression test to confirm the HRC path is unaffected.
+
+---
+
 ## 11. How to Start a New Skill Build
 
 When beginning development on any sub-agent skill, follow this checklist:

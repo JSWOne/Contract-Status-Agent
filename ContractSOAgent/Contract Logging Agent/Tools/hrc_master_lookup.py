@@ -1,9 +1,9 @@
 """
-Power Automate-backed HRC master lookup helper.
+Power Automate-backed SKU master lookup helper.
 
 The Cloud Run service does not read the SharePoint Excel master directly. It
-calls a small Power Automate helper flow that owns Excel/SharePoint access and
-returns filtered material/SKU data.
+calls Power Automate helper flows that own Excel/SharePoint access and return
+filtered material/SKU data.
 """
 
 from __future__ import annotations
@@ -71,9 +71,10 @@ def get_sku_details(
 
 
 def _call_lookup(payload: dict[str, Any]) -> dict[str, Any]:
-    url = os.getenv("HRC_MASTER_LOOKUP_URL", "").strip()
+    division = str(payload.get("division") or "").strip().upper()
+    url = _lookup_url_for_division(division)
     if not url:
-        raise RuntimeError("HRC_MASTER_LOOKUP_URL is not configured.")
+        raise RuntimeError(f"{_lookup_env_for_division(division)} is not configured.")
 
     try:
         response = requests.post(url, json=payload, timeout=90)
@@ -90,5 +91,13 @@ def _call_lookup(payload: dict[str, Any]) -> dict[str, Any]:
         return {"status": "success", "materials": [], "skus": [], "rows": []}
 
     if str(data.get("status", "success")).lower() not in {"success", "ok"}:
-        raise RuntimeError(data.get("message") or data.get("error") or "HRC master lookup failed.")
+        raise RuntimeError(data.get("message") or data.get("error") or f"{division or 'SKU'} master lookup failed.")
     return data
+
+
+def _lookup_url_for_division(division: str) -> str:
+    return os.getenv(_lookup_env_for_division(division), "").strip()
+
+
+def _lookup_env_for_division(division: str) -> str:
+    return "CRCA_MASTER_LOOKUP_URL" if division == "CRCA" else "HRC_MASTER_LOOKUP_URL"

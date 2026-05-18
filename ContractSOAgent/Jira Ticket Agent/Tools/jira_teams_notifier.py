@@ -28,6 +28,16 @@ def notify_jira_ticket_created(payload: dict[str, Any]) -> dict[str, Any]:
     ticket = normalize_jira_created_payload(payload)
     if ticket.get("key"):
         ticket = enrich_ticket_from_jira(ticket, payload)
+
+    if not is_so_request_ticket(ticket):
+        return {
+            "ok": True,
+            "teams_posted": False,
+            "skipped": True,
+            "skip_reason": "Only SO Request Jira request type tickets are posted to Teams.",
+            "ticket": ticket,
+        }
+
     card = payload.get("adaptive_card")
     if not isinstance(card, dict):
         card = build_jira_created_card(ticket)
@@ -109,6 +119,14 @@ def normalize_jira_created_payload(payload: dict[str, Any]) -> dict[str, str]:
     return {
         "key": str(key or "").strip(),
         "summary": str(summary or "").strip(),
+        "request_type": _field(
+            payload,
+            fields,
+            "Request Type",
+            "Customer Request Type",
+            "Issue Request Type",
+            "requestType",
+        ),
         "order_business_unit": _field(payload, fields, "Order Business unit"),
         "request_to": _field(payload, fields, "Request to"),
         "order_type": _field(payload, fields, "Order Type"),
@@ -177,8 +195,13 @@ def enrich_ticket_from_jira(ticket: dict[str, str], original_payload: dict[str, 
     return enriched
 
 
+def is_so_request_ticket(ticket: dict[str, str]) -> bool:
+    return _normalize_label(ticket.get("request_type")) == "so request"
+
+
 def build_jira_created_card(ticket: dict[str, str]) -> dict[str, Any]:
     facts = [
+        ("Request Type", ticket.get("request_type")),
         ("Order Business unit", ticket.get("order_business_unit")),
         ("Request to", ticket.get("request_to")),
         ("Order Type", ticket.get("order_type")),
@@ -281,3 +304,7 @@ def _snake(value: str) -> str:
 def _camel(value: str) -> str:
     parts = _snake(value).split("_")
     return parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+
+def _normalize_label(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())

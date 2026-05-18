@@ -311,3 +311,28 @@ Notes:
 - HTTP `202` means Power Automate accepted the Teams card request. Final visual delivery should be confirmed in the Teams `Jira Tickets` channel or Power Automate run history.
 - Existing Contract Logging Agent remained unchanged on `jsw-contract-logging-agent-00058-c9v`.
 - Existing Contract Status Agent remained unchanged on `jsw-contract-status-agent-00044-gs2`.
+
+### Jira Teams Request-Type Filter - 2026-05-18
+
+Status: Added to Jira Ticket Agent notifier.
+
+Requirement:
+
+- The Teams `Jira Tickets` channel must receive cards only for Jira tickets whose **Request Type** is exactly `SO Request`.
+- Tickets created under `Order support` or any other Jira request type must not post a Teams card.
+
+Implementation:
+
+- `Tools/jira_teams_notifier.py` now normalizes the Jira-created payload, enriches it from Jira when a ticket key is present, and reads the `Request Type` field before building or posting the Teams card.
+- If `request_type != SO Request`, the endpoint returns success with:
+
+```json
+{
+  "ok": true,
+  "teams_posted": false,
+  "skipped": true
+}
+```
+
+- This lets the Jira Automation rule continue calling `/jira-ticket-created` for all created tickets while the Cloud Run service filters Teams notifications safely.
+- The Teams Adaptive Card now includes `Request Type` for posted `SO Request` tickets.

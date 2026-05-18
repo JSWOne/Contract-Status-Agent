@@ -278,6 +278,11 @@ def _extract_value(value: Any) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, dict):
+        request_type = value.get("requestType")
+        if isinstance(request_type, dict):
+            request_type_name = _extract_value(request_type)
+            if request_type_name:
+                return request_type_name
         for key in ("value", "name", "displayName", "key"):
             if value.get(key) is not None:
                 result = str(value[key]).strip()

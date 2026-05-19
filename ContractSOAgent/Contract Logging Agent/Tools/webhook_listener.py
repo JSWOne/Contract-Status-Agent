@@ -25,7 +25,6 @@ from build_contract_card import (
     build_hrc_sku_confirmed_card,
     build_hrc_sku_details_card,
     build_hrc_sku_line_created_card,
-    build_hrc_sku_row_choice_card,
     build_hrc_sku_selection_card,
     build_hrc_sku_validation_failed_card,
     build_navigation_success_card,
@@ -368,8 +367,12 @@ def sku_select_confirm():
             {"contract_number": contract_number, "division": division, "context": context, "selection": selection, "rows": rows}
         )
         if len(rows) > 1:
-            post_sku_card(build_hrc_sku_row_choice_card(context, selection, rows, request_id))
-            return jsonify({"status": "row_choice_required", "request_id": request_id, "rows": len(rows)})
+            app.logger.info(
+                "[sku] %s: %s matching rows returned for %s; using the first row automatically",
+                contract_number,
+                len(rows),
+                description,
+            )
 
         details = _details_from_row(rows[0], material, context) if rows else _manual_hrc_details(selection, context)
         post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))

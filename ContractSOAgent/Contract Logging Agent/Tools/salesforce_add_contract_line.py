@@ -400,7 +400,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
         _select_lwc_combobox(page, "Customer Order Category", coc_value)
     if not _is_coc_selected(page) or (coc_value and not _coc_has_value(page, coc_value)):
         raise RuntimeError("Customer Order Category is still not selected. It is required before Cust key.")
-    _select_lwc_combobox_first_option(page, "Cust key")
+    # Cust key is optional for this flow; do not auto-fill unless explicitly required.
     # Wait for Part Number input to become enabled (it's disabled until COC is selected)
     try:
         page.wait_for_function(

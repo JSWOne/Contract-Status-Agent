@@ -692,15 +692,31 @@ def _remember_recent_sku_success(contract_number: str, line_data: dict, line_nam
 def _is_recent_duplicate_success(contract_number: str, line_data: dict, duplicate_line: str) -> bool:
     memory = _read_gcs_memory()
     recent = memory.get("sku_recent_success", {})
+    duplicate_line = str(duplicate_line or "").strip()
+    if not duplicate_line:
+        return False
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=20)
+
+    # First preference: exact same signature.
     item = recent.get(_sku_signature(contract_number, line_data))
-    if not item:
-        return False
-    if str(item.get("line_name", "")).strip() != str(duplicate_line or "").strip():
-        return False
-    ts = _parse_iso_dt(item.get("timestamp", ""))
-    if not ts:
-        return False
-    return ts >= datetime.now(timezone.utc) - timedelta(minutes=20)
+    if item and str(item.get("line_name", "")).strip() == duplicate_line:
+        ts = _parse_iso_dt(item.get("timestamp", ""))
+        if ts and ts >= cutoff:
+            return True
+
+    # Fallback: same contract + same line id in recent successes,
+    # even if payload normalization differs between duplicate callbacks.
+    contract_prefix = f"{str(contract_number or '').strip()}|"
+    for signature, value in recent.items():
+        if not str(signature).startswith(contract_prefix):
+            continue
+        if str(value.get("line_name", "")).strip() != duplicate_line:
+            continue
+        ts = _parse_iso_dt(value.get("timestamp", ""))
+        if ts and ts >= cutoff:
+            return True
+    return False
 
 
 def _extract_latest_line_from_no_new_error(message: str) -> str:

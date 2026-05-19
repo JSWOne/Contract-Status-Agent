@@ -430,6 +430,17 @@ def _handle_sku_details_confirm_payload(data: dict):
 
     details = dict(data)
     context = _enrich_context_from_jira(_context_from_memory_or_payload(contract_number, data))
+    request_id = str(data.get("request_id") or "").strip()
+    if request_id and _is_sku_request_duplicate(contract_number, request_id):
+        app.logger.info("[sku] duplicate sku-details-confirm ignored: contract=%s request_id=%s", contract_number, request_id)
+        safe_write_memory_step(
+            "sku_details_confirmed",
+            "success",
+            f"Ignored duplicate SKU confirm callback for contract {contract_number}",
+            {"contract_number": contract_number, "request_id": request_id},
+        )
+        return jsonify({"status": "duplicate_ignored", "contract_number": contract_number, "request_id": request_id})
+    _mark_sku_request_status(contract_number, request_id, "in_progress")
     division = (context.get("division") or details.get("division") or "").strip().upper()
     store_confirmed_sku(contract_number, details, division)
     safe_write_memory_step(
@@ -444,7 +455,7 @@ def _handle_sku_details_confirm_payload(data: dict):
 
     def _bg():
         with app.app_context():
-            _run_sku_creation(contract_number, line_data, details=details, hrc=True)
+            _run_sku_creation(contract_number, line_data, details=details, hrc=True, request_id=request_id)
 
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({"status": "success", "contract_number": contract_number})
@@ -514,7 +525,13 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
-def _run_sku_creation(contract_number: str, line_data: dict, details: dict | None = None, hrc: bool = False) -> None:
+def _run_sku_creation(
+    contract_number: str,
+    line_data: dict,
+    details: dict | None = None,
+    hrc: bool = False,
+    request_id: str = "",
+) -> None:
     try:
         from salesforce_add_contract_line import salesforce_add_contract_line
 
@@ -534,6 +551,7 @@ def _run_sku_creation(contract_number: str, line_data: dict, details: dict | Non
             f"Created SKU line {line_name} for contract {contract_number}",
             {"contract_number": contract_number, "line_name": line_name, "input": line_data},
         )
+        _mark_sku_request_status(contract_number, request_id, "success", line_name=line_name)
         record_contract_success(contract_number, line_data, line_name)
     except Exception as exc:
         duplicate_line = _extract_latest_line_from_no_new_error(str(exc))
@@ -556,12 +574,14 @@ def _run_sku_creation(contract_number: str, line_data: dict, details: dict | Non
                 f"Reused recently created SKU line {duplicate_line} for duplicate callback on contract {contract_number}",
                 {"contract_number": contract_number, "line_name": duplicate_line, "input": line_data},
             )
+            _mark_sku_request_status(contract_number, request_id, "success", line_name=duplicate_line)
             return
         app.logger.exception("[sku] Failed for contract %s: %s", contract_number, exc)
         try:
             post_sku_card(build_sku_failure_card(contract_number, str(exc)))
         except Exception as notify_exc:
             app.logger.exception("[sku] Could not post failure card: %s", notify_exc)
+        _mark_sku_request_status(contract_number, request_id, "failed", error=str(exc))
         record_contract_error(contract_number, line_data, str(exc))
 
 
@@ -735,6 +755,46 @@ def _parse_iso_dt(value: str) -> datetime | None:
         return datetime.fromisoformat(text)
     except Exception:
         return None
+
+
+def _mark_sku_request_status(contract_number: str, request_id: str, status: str, line_name: str = "", error: str = "") -> None:
+    if not request_id:
+        return
+    memory = _read_gcs_memory()
+    recent = memory.setdefault("sku_confirm_requests", {})
+    now = datetime.now(timezone.utc)
+    key = f"{str(contract_number or '').strip()}|{request_id}"
+    recent[key] = {
+        "contract_number": str(contract_number or "").strip(),
+        "request_id": request_id,
+        "status": status,
+        "line_name": str(line_name or "").strip(),
+        "error": str(error or "").strip(),
+        "timestamp": now.isoformat(),
+    }
+    cutoff = now - timedelta(hours=6)
+    for k, v in list(recent.items()):
+        ts = _parse_iso_dt(v.get("timestamp", ""))
+        if not ts or ts < cutoff:
+            recent.pop(k, None)
+    _write_gcs_memory(memory)
+
+
+def _is_sku_request_duplicate(contract_number: str, request_id: str) -> bool:
+    if not request_id:
+        return False
+    memory = _read_gcs_memory()
+    recent = memory.get("sku_confirm_requests", {})
+    key = f"{str(contract_number or '').strip()}|{request_id}"
+    item = recent.get(key)
+    if not item:
+        return False
+    ts = _parse_iso_dt(item.get("timestamp", ""))
+    if not ts:
+        return False
+    if ts < datetime.now(timezone.utc) - timedelta(minutes=30):
+        return False
+    return str(item.get("status", "")).strip() in {"in_progress", "success"}
 
 
 def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:

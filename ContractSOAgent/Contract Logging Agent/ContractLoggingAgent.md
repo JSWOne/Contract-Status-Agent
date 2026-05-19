@@ -2357,3 +2357,32 @@ Meaning:
 
 - Cloud Run wiring is ready.
 - The CRCA Power Automate flow still needs its Excel filter/Select/Response logic corrected so it returns CRCA rows from `CRCA.xlsx`.
+
+## 26. Session 2026-05-19 - CRCA False Failure Card Fix
+
+Issue observed:
+
+- Teams showed failure card:
+  - `No new Contract Line Item was created ... Latest line is still 00176967_50`
+- Portal showed line `00176967_50` actually created.
+
+Root cause:
+
+- Duplicate `/sku-details-confirm` callbacks can trigger parallel/repeated SKU creation attempts.
+- First callback may create line successfully.
+- Duplicate callback can run again and post a failure (baseline already at latest line), causing false-negative Teams message.
+
+Fix implemented:
+
+- Added idempotency guard on `/sku-details-confirm` using `contract_number + request_id`.
+- Added request status tracking in GCS memory key `sku_confirm_requests` with statuses:
+  - `in_progress`
+  - `success`
+  - `failed`
+- Duplicate callback within 30 minutes with same request id and status `in_progress/success` is ignored and does not start another creation run.
+- `_run_sku_creation` now updates request status on success/failure/duplicate-success reuse.
+
+Expected behavior after fix:
+
+- One user confirm action leads to one creation run.
+- Duplicate callback no longer posts false failure after successful line creation.

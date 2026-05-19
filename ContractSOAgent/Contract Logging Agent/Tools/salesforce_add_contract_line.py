@@ -390,7 +390,17 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     _screenshot(page, "06_dependent_fields_loaded")
 
     # 2. Customer Order Category — native <select> or LWC combobox
-    _select_lwc_combobox(page, "Customer Order Category", data.get("customer_order_category", ""))
+    coc_value = data.get("customer_order_category", "") or data.get("cust_order_category", "")
+    _select_lwc_combobox(page, "Customer Order Category", coc_value)
+    if coc_value and not _coc_has_value(page, coc_value):
+        page.wait_for_timeout(700)
+        _select_lwc_combobox(page, "Customer Order Category", coc_value)
+    if coc_value and not _coc_has_value(page, coc_value):
+        page.wait_for_timeout(700)
+        _select_lwc_combobox(page, "Customer Order Category", coc_value)
+    if not _is_coc_selected(page) or (coc_value and not _coc_has_value(page, coc_value)):
+        raise RuntimeError("Customer Order Category is still not selected. It is required before Cust key.")
+    _select_lwc_combobox_first_option(page, "Cust key")
     # Wait for Part Number input to become enabled (it's disabled until COC is selected)
     try:
         page.wait_for_function(
@@ -402,49 +412,51 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
         page.wait_for_timeout(3_000)
     _screenshot(page, "07_cust_order_cat")
 
-    # 3. Part Number is optional for this HRC flow. Keep the earlier behavior:
-    # try it only when Salesforce allows it, but do not block line creation.
-    _fill_part_number(page, data.get("sku_description", ""))
-    page.wait_for_timeout(2_000)
-    _screenshot(page, "08_part_number")
-
-    # 4. Eq. Specification Group — LWC combobox
+    # 3. Eq. Specification Group — LWC combobox
     _select_lwc_combobox(page, "Eq. Specification Group", data.get("eq_specif_grp", ""))
     page.wait_for_timeout(2_000)  # cascading fields update after this
     _screenshot(page, "09_eq_specif_grp")
 
-    # 5. Eq. Specification — cascading LWC combobox (depends on Eq. Spec Group)
+    # 4. Eq. Specification — cascading LWC combobox (depends on Eq. Spec Group)
     _select_lwc_combobox(page, "Eq. Specification", data.get("eq_specifi", ""))
     page.wait_for_timeout(2_000)
     _screenshot(page, "10_eq_specifi")
 
-    # 6. Eq. Sub Specification — cascading LWC combobox (depends on Eq. Specification)
+    # 5. Eq. Sub Specification — cascading LWC combobox (depends on Eq. Specification)
     _select_lwc_combobox(page, "Eq. Sub Specification", data.get("eq_sub_grade", ""))
     page.wait_for_timeout(1_500)
     _screenshot(page, "11_eq_sub_grade")
 
-    # 7. End Application — LWC combobox
+    # 6. End Application — LWC combobox
     _select_lwc_combobox(page, "End Application", data.get("end_appn", ""))
     page.wait_for_timeout(1_500)
     _screenshot(page, "12_end_appn")
+
+    # 7. Skip optional Part Number.
+    # Per latest requirement, we only fill mandatory (*) fields.
+    page.wait_for_timeout(800)
 
     # 8. Order Quantity — plain number input (in General Fields section)
     _fill_input_by_label(page, "Order Quantity", data.get("order_qty", ""))
     page.wait_for_timeout(1_000)
     _screenshot(page, "13_order_qty")
 
-    # Extract plant info for S Plant selection later — Supply Plant / Depot is not filled
-    plant_raw  = data.get("plant_code", "")
+    # Extract plant info for Supply Plant / Depot and optional S Plant selection.
+    plant_raw = data.get("plant_code", "")
     plant_code = plant_raw.split()[0].rstrip("-") if plant_raw else ""
-    if plant_raw:
-        _fill_supply_plant(page, plant_code, plant_raw)
-        page.wait_for_timeout(1_500)
-        _screenshot(page, "13b_supply_plant")
+    division = str(data.get("division", "")).strip().upper()
 
     # 9. Customer Requested Date — date input
+    # Keep this before Supply Plant lookup. Plant lookup can open overlays that intercept date clicks.
     _fill_date_by_label(page, "Customer Requested Date", data.get("cust_req_date", ""))
     page.wait_for_timeout(1_500)
     _screenshot(page, "14_cust_req_date")
+
+    # 9b. Supply Plant / Depot lookup
+    if plant_raw:
+        _fill_supply_plant(page, plant_code, plant_raw)
+        page.wait_for_timeout(1_500)
+        _screenshot(page, "14b_supply_plant")
 
     # 10. Width
     _fill_input_by_label(page, "Width", data.get("width", ""))
@@ -456,9 +468,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     page.wait_for_timeout(1_000)
     _screenshot(page, "16_thickness")
 
-    _fill_input_by_label(page, "Length", data.get("length", ""))
-    page.wait_for_timeout(1_000)
-    _screenshot(page, "16b_length")
+    # Length is optional for this flow; skip by design.
 
     # 12. Edge Condition — LWC combobox
     _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
@@ -473,8 +483,9 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     page.wait_for_timeout(1_500)
     _screenshot(page, "17_edge_condition")
 
-    # 13. S Plant — required dropdown in "Plant Description" section
-    if plant_raw:
+    # 13. S Plant — required for some HRC variants.
+    # CRCA flow already maps/uses Supply Plant / Depot and forcing S Plant causes flaky overlay issues.
+    if plant_raw and division != "CRCA":
         _select_s_plant(page, plant_code, plant_raw)
         page.wait_for_timeout(1_500)
         _screenshot(page, "17b_s_plant")
@@ -516,6 +527,37 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
     if not value:
         return
     log.info("Selecting combobox '%s' = '%s'", label, value)
+
+    # Strategy 0: label row -> native <select> (high priority for Customer Order Category)
+    try:
+        selected = page.evaluate(
+            """({ labelText, val }) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const labels = Array.from(document.querySelectorAll('label, span, div'))
+                    .filter((el) => norm(el.textContent).includes(norm(labelText)));
+                for (const labelEl of labels) {
+                    const row = labelEl.closest('tr, .slds-form-element, lightning-layout-item, div');
+                    if (!row) continue;
+                    const sel = row.querySelector('select');
+                    if (!sel) continue;
+                    const opts = Array.from(sel.options || []);
+                    const idx = opts.findIndex((o) => norm(o.textContent) === norm(val) || norm(o.value) === norm(val));
+                    if (idx >= 0) {
+                        sel.value = opts[idx].value;
+                        sel.dispatchEvent(new Event('input', { bubbles: true }));
+                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+                return false;
+            }""",
+            {"labelText": label, "val": value},
+        )
+        if selected:
+            log.info("  selected via row-level native <select>")
+            return
+    except Exception:
+        pass
 
     # Strategy 1a: native <select> by aria-label
     for sel in [
@@ -576,6 +618,64 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
     log.warning("  could not select combobox '%s' = '%s'", label, value)
 
 
+def _select_lwc_combobox_first_option(page, label: str) -> None:
+    """Open combobox and select first visible option."""
+    if not label:
+        return
+    log.info("Selecting first option for combobox '%s'", label)
+    for trigger_sel in [f'button[aria-label="{label}"]', f'button[aria-label*="{label}"]']:
+        try:
+            trigger = page.locator(trigger_sel).first
+            if trigger.is_visible(timeout=800):
+                trigger.scroll_into_view_if_needed()
+                trigger.click(timeout=3_000)
+                page.wait_for_timeout(600)
+                try:
+                    page.locator(
+                        '[role="option"], lightning-base-combobox-item, .slds-listbox__item'
+                    ).first.click(timeout=5_000)
+                    page.wait_for_timeout(700)
+                    log.info("  selected first option via '%s'", trigger_sel)
+                    return
+                except Exception:
+                    # Some LWC dropdowns require keyboard selection after opening.
+                    page.keyboard.press("ArrowDown")
+                    page.wait_for_timeout(200)
+                    page.keyboard.press("Enter")
+                    page.wait_for_timeout(700)
+                    log.info("  selected first option via keyboard on '%s'", trigger_sel)
+                    return
+        except Exception:
+            pass
+    log.warning("  could not select first option for '%s'", label)
+
+
+def _is_coc_selected(page) -> bool:
+    """True when Customer Order Category is not blank/--None--."""
+    try:
+        btn = page.locator('button[aria-label="Customer Order Category"]').first
+        text = (btn.inner_text(timeout=1_000) or "").strip()
+        if not text:
+            text = (btn.get_attribute("data-value") or "").strip()
+        if not text:
+            return False
+        lowered = str(text).strip().lower()
+        return lowered not in {"--none--", "none", "select customer order category", "select"}
+    except Exception:
+        return False
+
+
+def _coc_has_value(page, expected: str) -> bool:
+    try:
+        btn = page.locator('button[aria-label="Customer Order Category"]').first
+        text = (btn.inner_text(timeout=1_000) or "").strip()
+        data_value = (btn.get_attribute("data-value") or "").strip()
+        exp = str(expected or "").strip().lower()
+        return text.lower() == exp or data_value.lower() == exp
+    except Exception:
+        return False
+
+
 def _click_dropdown_option(page, value: str, timeout: int = 6_000) -> None:
     """Click a dropdown option — tries multiple role/element patterns."""
     patterns = [
@@ -613,11 +713,54 @@ def _click_dropdown_option(page, value: str, timeout: int = 6_000) -> None:
 
 
 def _fill_part_number(page, value: str) -> bool:
-    """Fill the Part Number lookup by clicking the magnifying glass button next to the disabled input."""
+    """Fill Part Number for both lookup and dropdown-style layouts."""
     if not value:
         return False
     log.info("Filling Part Number: '%s'", value)
     try:
+        # Strategy 0: direct LWC trigger by aria-label, then choose first matching/visible option.
+        for trigger_sel in ['button[aria-label="Part Number"]', 'button[aria-label*="Part Number"]']:
+            try:
+                trigger = page.locator(trigger_sel).first
+                if trigger.is_visible(timeout=1_000):
+                    trigger.scroll_into_view_if_needed(timeout=3_000)
+                    trigger.click(timeout=3_000, force=True)
+                    page.wait_for_timeout(700)
+                    try:
+                        page.locator(
+                            '[role="option"], lightning-base-combobox-item, .slds-listbox__item'
+                        ).filter(has_text=re.compile(re.escape(value), re.IGNORECASE)).first.click(timeout=4_000)
+                    except Exception:
+                        page.locator(
+                            '[role="option"], lightning-base-combobox-item, .slds-listbox__item'
+                        ).first.click(timeout=4_000)
+                    page.wait_for_timeout(900)
+                    if _field_has_any_value(page, "Part Number"):
+                        log.info("  Part Number selected via direct LWC trigger")
+                        return True
+            except Exception:
+                pass
+
+        # New Contract Line (CRCA) frequently renders Part Number as a dropdown.
+        if _open_dropdown_near_label(page, "Part Number"):
+            page.wait_for_timeout(600)
+            _click_dropdown_option(page, value, timeout=8_000)
+            page.wait_for_timeout(900)
+            if _field_contains_value(page, "Part Number", value):
+                log.info("  Part Number selected via dropdown near label")
+                return True
+            # If exact text did not match, choose first visible row (user-approved behavior).
+            try:
+                page.locator(
+                    '[role="option"], li[role="presentation"], lightning-base-combobox-item, .slds-listbox__item'
+                ).first.click(timeout=5_000)
+                page.wait_for_timeout(1_000)
+                if _field_has_any_value(page, "Part Number"):
+                    log.info("  Part Number selected via first visible dropdown option")
+                    return True
+            except Exception:
+                pass
+
         # Scroll the disabled input into view first
         inp = page.locator(
             'input[placeholder="Select Part Number"], '
@@ -626,6 +769,24 @@ def _fill_part_number(page, value: str) -> bool:
         ).first
         inp.scroll_into_view_if_needed(timeout=5_000)
         page.wait_for_timeout(500)
+        try:
+            if not inp.is_enabled(timeout=500):
+                toggle = inp.locator(
+                    'xpath=ancestor::*[contains(@class,"slds-combobox__form-element")][1]//button | '
+                    'ancestor::*[contains(@class,"slds-combobox")][1]//button'
+                ).first
+                if toggle.is_visible(timeout=1_000):
+                    toggle.click(timeout=3_000, force=True)
+                    page.wait_for_timeout(700)
+                    page.locator(
+                        '[role="option"], lightning-base-combobox-item, .slds-listbox__item'
+                    ).first.click(timeout=5_000)
+                    page.wait_for_timeout(1_000)
+                    if _field_has_any_value(page, "Part Number"):
+                        log.info("  Part Number selected via disabled-input toggle fallback")
+                        return True
+        except Exception:
+            pass
 
         # Click the search button (magnifying glass) — traverse up DOM to find it.
         clicked = _click_lookup_button_near_input(page, "Part Number")
@@ -636,8 +797,44 @@ def _fill_part_number(page, value: str) -> bool:
             except Exception:
                 pass
         if not clicked:
-            log.warning("  Part Number search button not found")
-            return False
+            log.warning("  Part Number search button not found; trying direct combobox option fallback")
+            try:
+                inp.click(timeout=3_000)
+                page.wait_for_timeout(800)
+                page.locator('li, [role="option"], lightning-base-combobox-item').filter(
+                    has_text=re.compile(re.escape(value), re.IGNORECASE)
+                ).first.click(timeout=6_000)
+                page.wait_for_timeout(1_000)
+                _screenshot(page, "11b_part_number_direct_option_fallback")
+                log.info("  Part Number selected via direct option fallback")
+                return True
+            except Exception:
+                pass
+            try:
+                inp.click(timeout=3_000)
+                page.wait_for_timeout(800)
+                page.locator('[role="option"], li, lightning-base-combobox-item, .slds-listbox__item').first.click(timeout=5_000)
+                page.wait_for_timeout(1_000)
+                _screenshot(page, "11c_part_number_first_option_fallback")
+                if _field_has_any_value(page, "Part Number"):
+                    log.info("  Part Number selected via first visible option fallback")
+                    return True
+            except Exception:
+                pass
+            try:
+                inp.click(timeout=3_000)
+                inp.fill(value)
+                page.wait_for_timeout(1_200)
+                page.keyboard.press("ArrowDown")
+                page.wait_for_timeout(250)
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(1_200)
+                _screenshot(page, "11d_part_number_direct_typing_fallback")
+                if _field_has_any_value(page, "Part Number"):
+                    log.info("  Part Number selected via direct typing fallback")
+                    return True
+            except Exception:
+                return False
         page.wait_for_timeout(1_500)
         log.info("  Part Number search button clicked")
 
@@ -650,10 +847,96 @@ def _fill_part_number(page, value: str) -> bool:
         page.locator('li, [role="option"]').filter(
             has_text=re.compile(re.escape(value), re.IGNORECASE)
         ).first.click(timeout=8_000)
-        log.info("  Part Number selected")
-        return True
+        if _field_has_any_value(page, "Part Number"):
+            log.info("  Part Number selected")
+            return True
+        return False
     except Exception as e:
         log.warning("  Part Number failed: %s", e)
+        return False
+
+
+def _open_dropdown_near_label(page, label: str) -> bool:
+    try:
+        clicked = page.evaluate(
+            """(labelText) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const isVisible = (el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const labels = Array.from(document.querySelectorAll('label, span'))
+                    .filter((el) => norm(el.textContent).toLowerCase() === labelText.toLowerCase());
+                for (const labelEl of labels) {
+                    let root = labelEl.closest('.slds-form-element, lightning-layout-item, div');
+                    for (let i = 0; i < 6 && root; i++, root = root.parentElement) {
+                        const candidates = Array.from(root.querySelectorAll(
+                            'button, [role="button"], .slds-combobox__input, input'
+                        )).filter(isVisible);
+                        const trigger = candidates.find((el) => /Part Number|Select Part Number/i.test(
+                            norm(el.getAttribute('aria-label')) + ' ' + norm(el.getAttribute('placeholder'))
+                        )) || candidates[candidates.length - 1];
+                        if (trigger) {
+                            trigger.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""",
+            label,
+        )
+        return bool(clicked)
+    except Exception:
+        return False
+
+
+def _field_contains_value(page, label: str, expected: str) -> bool:
+    try:
+        text = page.evaluate(
+            """(labelText) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const labels = Array.from(document.querySelectorAll('label, span'))
+                    .filter((el) => norm(el.textContent).toLowerCase() === labelText.toLowerCase());
+                for (const labelEl of labels) {
+                    const root = labelEl.closest('.slds-form-element, lightning-layout-item, div') || labelEl.parentElement;
+                    if (!root) continue;
+                    const valueEl = root.querySelector('input, button, .slds-combobox__input, .slds-truncate');
+                    if (!valueEl) continue;
+                    const value = norm(valueEl.value || valueEl.textContent || valueEl.getAttribute('title'));
+                    if (value) return value;
+                }
+                return '';
+            }""",
+            label,
+        )
+        return str(expected or "").strip().lower() in str(text or "").strip().lower()
+    except Exception:
+        return False
+
+
+def _field_has_any_value(page, label: str) -> bool:
+    try:
+        text = page.evaluate(
+            """(labelText) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const labels = Array.from(document.querySelectorAll('label, span'))
+                    .filter((el) => norm(el.textContent).toLowerCase() === labelText.toLowerCase());
+                for (const labelEl of labels) {
+                    const root = labelEl.closest('.slds-form-element, lightning-layout-item, div') || labelEl.parentElement;
+                    if (!root) continue;
+                    const valueEl = root.querySelector('input, button, .slds-combobox__input, .slds-truncate');
+                    if (!valueEl) continue;
+                    const value = norm(valueEl.value || valueEl.textContent || valueEl.getAttribute('title'));
+                    if (value && !/^select /i.test(value)) return value;
+                }
+                return '';
+            }""",
+            label,
+        )
+        return bool(str(text or "").strip())
+    except Exception:
         return False
 
 
@@ -780,6 +1063,39 @@ def _supply_plant_lookup_modal_open(page) -> bool:
 def _select_supply_plant_result(page, value: str, plant_raw: str = "") -> bool:
     """Select the exact Supply Plant result from the JSW Locations full lookup modal."""
     plant_keyword = _plant_keyword(plant_raw or value)
+    # Preferred path: click DESCRIPTION link for the row whose CODE matches.
+    try:
+        selected = page.evaluate(
+            """({ code, keyword }) => {
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const lower = (s) => norm(s).toLowerCase();
+                const codeNorm = norm(code);
+                const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                for (const row of rows) {
+                    const cells = Array.from(row.querySelectorAll('td'));
+                    if (!cells.length) continue;
+                    const rowCode = cells.length > 1 ? norm(cells[1].innerText || cells[1].textContent) : '';
+                    const rowText = lower(row.innerText || row.textContent);
+                    const codeMatch = codeNorm && rowCode === codeNorm;
+                    const keywordMatch = keyword && rowText.includes(lower(keyword));
+                    if (codeMatch || keywordMatch) {
+                        const descLink = cells[0].querySelector('a') || row.querySelector('a');
+                        if (descLink) {
+                            descLink.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""",
+            {"code": str(value or "").strip(), "keyword": plant_keyword},
+        )
+        if selected:
+            page.wait_for_timeout(1_200)
+            if not _supply_plant_lookup_modal_open(page):
+                return True
+    except Exception:
+        pass
     if plant_keyword:
         try:
             page.locator("a").filter(
@@ -1036,7 +1352,12 @@ def _save(page, contract_number: str = "", baseline_line: str = "") -> str:
     try:
         # Wait for any animations/re-renders to settle before locating Save
         page.wait_for_timeout(1_500)
-        save_btn = page.locator('button:has-text("Save")').first
+        save_btn = page.locator(
+            '.modal-container button.slds-button_brand:has-text("Save"), '
+            '.slds-modal button.slds-button_brand:has-text("Save"), '
+            'button.slds-button_brand:has-text("Save"), '
+            'button:has-text("Save")'
+        ).first
         save_btn.wait_for(state="visible", timeout=10_000)
         save_btn.scroll_into_view_if_needed(timeout=5_000)
         page.wait_for_timeout(800)
@@ -1092,11 +1413,27 @@ def _save(page, contract_number: str = "", baseline_line: str = "") -> str:
     if line_name:
         baseline_idx = _line_index(baseline_line)
         created_idx = _line_index(line_name)
-        if baseline_idx and created_idx and created_idx <= baseline_idx:
-            raise RuntimeError(
-                f"No new Contract Line Item was created for contract {contract_number}. "
-                f"Latest line is still {line_name}."
-            )
+        if baseline_idx and created_idx and created_idx <= baseline_idx and contract_number:
+            # Salesforce occasionally shows stale Related data right after Save.
+            # Retry with short waits + reload before declaring failure.
+            for _ in range(3):
+                try:
+                    page.wait_for_timeout(3_000)
+                    page.reload(wait_until="domcontentloaded", timeout=25_000)
+                    page.wait_for_timeout(2_000)
+                except Exception:
+                    pass
+                retried = _find_latest_contract_line_via_related_tab(page, contract_number)
+                retried_idx = _line_index(retried)
+                if retried_idx > baseline_idx:
+                    line_name = retried
+                    created_idx = retried_idx
+                    break
+            if created_idx <= baseline_idx:
+                raise RuntimeError(
+                    f"No new Contract Line Item was created for contract {contract_number}. "
+                    f"Latest line is still {line_name}."
+                )
         log.info("Contract line name: %s", line_name)
     else:
         diagnostic = _after_save_diagnostics(page)

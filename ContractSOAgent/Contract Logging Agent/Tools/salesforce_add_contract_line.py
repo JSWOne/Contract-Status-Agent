@@ -43,8 +43,9 @@ def salesforce_add_contract_line(contract_number: str, line_data: dict) -> str:
         try:
             _login(page)
             _search_and_open_contract(page, contract_number)
+            baseline_line = _find_latest_contract_line_via_related_tab(page, contract_number)
             _click_new_contract_line(page)
-            return _fill_contract_line(page, line_data, contract_number)
+            return _fill_contract_line(page, line_data, contract_number, baseline_line)
         finally:
             browser.close()
     return ""
@@ -63,8 +64,9 @@ def salesforce_add_contract_line_for_training(
         try:
             _login(page)
             _search_and_open_contract(page, contract_number)
+            baseline_line = _find_latest_contract_line_via_related_tab(page, contract_number)
             _click_new_contract_line(page)
-            line_name = _fill_contract_line(page, line_data, contract_number) or ""
+            line_name = _fill_contract_line(page, line_data, contract_number, baseline_line) or ""
             print(f"Contract line result: {line_name or '[not captured]'}")
             if pause_seconds > 0:
                 print(f"Browser will stay open for {pause_seconds} seconds for verification.")
@@ -373,7 +375,7 @@ def _click_new_contract_line(page) -> None:
 # Step 4 — Fill the contract line form
 # ---------------------------------------------------------------------------
 
-def _fill_contract_line(page, data: dict, contract_number: str = "") -> str:
+def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_line: str = "") -> str:
     _fix_resolution(page)
     log.info("--- Filling contract line form ---")
 
@@ -480,7 +482,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "") -> str:
     _screenshot(page, "18_before_save", full_page=True)
     log.info("All fields filled — ready to save")
 
-    return _save(page, contract_number)
+    return _save(page, contract_number, baseline_line)
 
 
 # ---------------------------------------------------------------------------
@@ -1027,7 +1029,7 @@ def _fill_date_by_label(page, label: str, value: str) -> None:
         log.warning("  could not fill date '%s': %s", label, e)
 
 
-def _save(page, contract_number: str = "") -> str:
+def _save(page, contract_number: str = "", baseline_line: str = "") -> str:
     """Click Save, wait for the detail page, then return the contract line name (e.g. '00170850_20')."""
     _fix_resolution(page)
     log.info("Clicking Save")
@@ -1088,6 +1090,13 @@ def _save(page, contract_number: str = "") -> str:
         line_name = _find_latest_contract_line_via_related_tab(page, contract_number)
 
     if line_name:
+        baseline_idx = _line_index(baseline_line)
+        created_idx = _line_index(line_name)
+        if baseline_idx and created_idx and created_idx <= baseline_idx:
+            raise RuntimeError(
+                f"No new Contract Line Item was created for contract {contract_number}. "
+                f"Latest line is still {line_name}."
+            )
         log.info("Contract line name: %s", line_name)
     else:
         diagnostic = _after_save_diagnostics(page)
@@ -1141,6 +1150,16 @@ def _find_latest_contract_line_via_related_tab(page, contract_number: str) -> st
     except Exception as exc:
         log.warning("Contract line Related tab fallback failed: %s", exc)
     return ""
+
+
+def _line_index(line_name: str) -> int:
+    match = re.match(r"^\d{7,9}_(\d+)$", str(line_name or "").strip())
+    if not match:
+        return 0
+    try:
+        return int(match.group(1))
+    except Exception:
+        return 0
 
 
 def _extract_save_error(page) -> str:

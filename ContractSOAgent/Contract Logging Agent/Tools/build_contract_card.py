@@ -661,32 +661,35 @@ def build_hrc_sku_details_card(
 
 def build_hrc_sku_confirmed_card(contract_number: str, details: dict, context: dict | None = None) -> dict:
     context = context or {}
+    division = (context.get("division") or details.get("division") or "HRC").strip().upper()
+    material = (details.get("material") or "").strip()
+
+    # Keep the core context visible for auditability.
     facts = [
         ("Jira Ticket", context.get("ticket_id") or details.get("ticket_id")),
         ("Contract Number", contract_number),
-        ("Division", context.get("division") or details.get("division") or "HRC"),
+        ("Division", division),
         ("Sold to Party / B P Code", context.get("sold_to_party") or details.get("bp_code")),
         ("Ship to Party / S P Code", context.get("ship_to_party") or details.get("sp_code")),
         ("SHIP Plant Code", context.get("ship_plant_code") or details.get("plant_code")),
-        ("Material", details.get("material")),
+        ("Material", material),
         ("SKU / Description", details.get("description")),
         ("Qty", details.get("qty")),
-        ("Customer Order Category", details.get("customer_order_category")),
-        ("Eq. Specification Group", details.get("eq_specif_grp")),
-        ("Eq. Specification", details.get("eq_specifi")),
-        ("Eq. Sub Specification", details.get("eq_sub_grade")),
-        ("End Application", details.get("end_appn")),
-        ("RH REQ", details.get("rh_req")),
-        ("Supply Plant / Depot", details.get("plant_code") or context.get("ship_plant_code")),
-        ("Customer Requested Date", details.get("cust_req_date")),
-        ("Width", details.get("width")),
-        ("Thickness", details.get("thickness")),
-        ("Length", details.get("length")),
-        ("Thickness Tolerance Type", details.get("thick_tol_type")),
-        ("Edge Condition", details.get("edge_con")),
-        ("Oil Required", details.get("oil_req")),
     ]
-    division = (context.get("division") or details.get("division") or "HRC").strip().upper()
+
+    # Add only the parameter fields configured for this division/material.
+    for field_id, label in _sku_detail_fields(division, material):
+        value = details.get(field_id)
+        if field_id == "plant_code" and not value:
+            value = context.get("ship_plant_code")
+        facts.append((label, value))
+
+    filtered_facts = [
+        {"title": label, "value": str(value).strip()}
+        for label, value in facts
+        if _has_meaningful_value(value)
+    ]
+
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -712,7 +715,7 @@ def build_hrc_sku_confirmed_card(contract_number: str, details: dict, context: d
             {
                 "type": "FactSet",
                 "spacing": "Medium",
-                "facts": [{"title": label, "value": str(value or "-")} for label, value in facts],
+                "facts": filtered_facts,
             },
         ],
     }
@@ -823,6 +826,13 @@ def _row_get(row: dict, *keys: str) -> str:
         if value not in (None, ""):
             return str(value).strip()
     return ""
+
+
+def _has_meaningful_value(value) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return text.lower() not in {"-", ".", "--none--", "none", "null", "nan"}
 
 
 def _sku_detail_fields(division: str, material: str) -> list[tuple[str, str]]:

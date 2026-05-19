@@ -2,6 +2,6 @@ flask
 google-cloud-storage
 gunicorn
 openpyxl
-playwright
+playwright==1.59.0
 python-dotenv
 requests

@@ -527,6 +527,7 @@ def _run_sku_creation(contract_number: str, line_data: dict, details: dict | Non
             post_sku_card(build_hrc_sku_line_created_card(contract_number, line_name, details or line_data))
         else:
             post_sku_card(build_sku_success_card(contract_number, line_name))
+        _remember_recent_sku_success(contract_number, line_data, line_name)
         safe_write_memory_step(
             "create_sku_line",
             "success",
@@ -535,6 +536,27 @@ def _run_sku_creation(contract_number: str, line_data: dict, details: dict | Non
         )
         record_contract_success(contract_number, line_data, line_name)
     except Exception as exc:
+        duplicate_line = _extract_latest_line_from_no_new_error(str(exc))
+        if duplicate_line and _is_recent_duplicate_success(contract_number, line_data, duplicate_line):
+            app.logger.info(
+                "[sku] Duplicate callback detected for contract %s; reusing line %s as success",
+                contract_number,
+                duplicate_line,
+            )
+            try:
+                if hrc:
+                    post_sku_card(build_hrc_sku_line_created_card(contract_number, duplicate_line, details or line_data))
+                else:
+                    post_sku_card(build_sku_success_card(contract_number, duplicate_line))
+            except Exception as notify_exc:
+                app.logger.exception("[sku] Could not post duplicate-success card: %s", notify_exc)
+            safe_write_memory_step(
+                "create_sku_line",
+                "success",
+                f"Reused recently created SKU line {duplicate_line} for duplicate callback on contract {contract_number}",
+                {"contract_number": contract_number, "line_name": duplicate_line, "input": line_data},
+            )
+            return
         app.logger.exception("[sku] Failed for contract %s: %s", contract_number, exc)
         try:
             post_sku_card(build_sku_failure_card(contract_number, str(exc)))
@@ -638,6 +660,65 @@ def _parse_date(value: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _sku_signature(contract_number: str, line_data: dict) -> str:
+    fields = [
+        str(contract_number or "").strip(),
+        str(line_data.get("division", "")).strip().upper(),
+        str(line_data.get("product_name", "")).strip().upper(),
+        str(line_data.get("sku_description", "")).strip().upper(),
+        str(line_data.get("order_qty", "")).strip(),
+        str(line_data.get("plant_code", "")).strip().upper(),
+        str(line_data.get("cust_req_date", "")).strip(),
+    ]
+    return "|".join(fields)
+
+
+def _remember_recent_sku_success(contract_number: str, line_data: dict, line_name: str) -> None:
+    memory = _read_gcs_memory()
+    recent = memory.setdefault("sku_recent_success", {})
+    now = datetime.now(timezone.utc)
+    signature = _sku_signature(contract_number, line_data)
+    recent[signature] = {"timestamp": now.isoformat(), "line_name": line_name}
+    cutoff = now - timedelta(hours=2)
+    for key, value in list(recent.items()):
+        ts = _parse_iso_dt(value.get("timestamp", ""))
+        if not ts or ts < cutoff:
+            recent.pop(key, None)
+    _write_gcs_memory(memory)
+
+
+def _is_recent_duplicate_success(contract_number: str, line_data: dict, duplicate_line: str) -> bool:
+    memory = _read_gcs_memory()
+    recent = memory.get("sku_recent_success", {})
+    item = recent.get(_sku_signature(contract_number, line_data))
+    if not item:
+        return False
+    if str(item.get("line_name", "")).strip() != str(duplicate_line or "").strip():
+        return False
+    ts = _parse_iso_dt(item.get("timestamp", ""))
+    if not ts:
+        return False
+    return ts >= datetime.now(timezone.utc) - timedelta(minutes=20)
+
+
+def _extract_latest_line_from_no_new_error(message: str) -> str:
+    text = str(message or "")
+    if "No new Contract Line Item was created" not in text:
+        return ""
+    match = re.search(r"Latest line is still\s+(\d{7,9}_\d+)", text)
+    return match.group(1) if match else ""
+
+
+def _parse_iso_dt(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
 
 
 def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:

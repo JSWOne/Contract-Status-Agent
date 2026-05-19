@@ -1415,12 +1415,12 @@ def _save(page, contract_number: str = "", baseline_line: str = "") -> str:
         created_idx = _line_index(line_name)
         if baseline_idx and created_idx and created_idx <= baseline_idx and contract_number:
             # Salesforce occasionally shows stale Related data right after Save.
-            # Retry with short waits + reload before declaring failure.
-            for _ in range(3):
+            # Retry with longer waits + reload before declaring failure.
+            for attempt in range(1, 7):
                 try:
-                    page.wait_for_timeout(3_000)
+                    page.wait_for_timeout(4_000 if attempt < 3 else 8_000)
                     page.reload(wait_until="domcontentloaded", timeout=25_000)
-                    page.wait_for_timeout(2_000)
+                    page.wait_for_timeout(2_500)
                 except Exception:
                     pass
                 retried = _find_latest_contract_line_via_related_tab(page, contract_number)

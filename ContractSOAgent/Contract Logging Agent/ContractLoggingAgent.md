@@ -2386,3 +2386,17 @@ Expected behavior after fix:
 
 - One user confirm action leads to one creation run.
 - Duplicate callback no longer posts false failure after successful line creation.
+
+### Verification - 2026-05-19 15:30 IST
+
+- Retested locally on contract `00176967`.
+- Baseline before run: `00176967_50`
+- New line created and detected: `00176967_60`
+- Result: post-save verifier no longer returned false failure for this run.
+
+Additional hardening:
+
+- Increased post-save related-tab verification retries with reload + longer waits before raising:
+  - from short/3 retries
+  - to longer/6 retries
+- This reduces stale-read false negatives right after Salesforce Save.

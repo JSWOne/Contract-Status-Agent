@@ -4,6 +4,7 @@ Purpose: Teams ContractBot webhook and Power Automate confirmation callback.
 """
 
 import base64
+import ast
 import hashlib
 import hmac
 import json
@@ -41,7 +42,7 @@ from contract_memory import (
 )
 from create_contract_in_portal import create_contract_in_portal
 from fetch_jira_ticket import JiraAuthError, JiraConnectionError, fetch_jira_ticket
-from hrc_master_lookup import get_sku_choices, get_sku_details
+from master_lookup import get_sku_choices, get_sku_details
 from navigate_contract_page import navigate_to_contract_page
 from notify_teams import post_card, post_text, post_sku_card
 
@@ -59,7 +60,7 @@ MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
 GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
 
-SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA"}
+SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI"}
 
 SALESFORCE_PRODUCT_BY_MATERIAL = {
     "HRC": {
@@ -69,6 +70,12 @@ SALESFORCE_PRODUCT_BY_MATERIAL = {
     "CRCA": {
         "S_CRCACF": "CRCA Coil - (S_CRCACF)",
         "S_CRCASF": "CRCA Sheet - (S_CRCASF)",
+    },
+    "GI": {
+        "S_GICF": "GI Coil - (S_GICF)",
+        "S_GISF": "GI Sheet - (S_GISF)",
+        "S_HRGICF": "HR GI Coil - (S_HRGICF)",
+        "S_ZMCF": "ZM Coil - (S_ZMCF)",
     },
 }
 
@@ -322,7 +329,7 @@ def sku_select_confirm():
         return _handle_sku_details_confirm_payload(data)
 
     contract_number = (data.get("contract_number") or "").strip()
-    material = (data.get("material") or "").strip()
+    material = _normalise_material_value(data.get("material"))
     description = (data.get("description") or data.get("sku_description") or "").strip()
     qty = (data.get("qty") or data.get("order_qty") or "").strip()
 
@@ -375,6 +382,27 @@ def sku_select_confirm():
             )
 
         details = _details_from_row(rows[0], material, context) if rows else _manual_hrc_details(selection, context)
+        app.logger.info(
+            "[sku] %s: details prefill snapshot=%s",
+            contract_number,
+            json.dumps(
+                {
+                    "customer_order_category": details.get("customer_order_category", ""),
+                    "eq_specif_grp": details.get("eq_specif_grp", ""),
+                    "eq_specifi": details.get("eq_specifi", ""),
+                    "eq_sub_grade": details.get("eq_sub_grade", ""),
+                    "end_appn": details.get("end_appn", ""),
+                    "rh_req": details.get("rh_req", ""),
+                    "plant_code": details.get("plant_code", ""),
+                    "width": details.get("width", ""),
+                    "thickness": details.get("thickness", ""),
+                    "length": details.get("length", ""),
+                    "thick_tol_type": details.get("thick_tol_type", ""),
+                    "edge_con": details.get("edge_con", ""),
+                    "oil_req": details.get("oil_req", ""),
+                }
+            ),
+        )
         post_sku_card(build_hrc_sku_details_card(context, selection, details, request_id))
         return jsonify({"status": "details_card_posted", "request_id": request_id, "rows": len(rows)})
     except Exception as exc:
@@ -483,6 +511,30 @@ def _is_hrc_details_payload(data: dict) -> bool:
     return any(str(data.get(key) or "").strip() for key in detail_keys)
 
 
+def _normalise_material_value(raw) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    # Normal case: already material code.
+    if re.fullmatch(r"[A-Za-z0-9_]+", text):
+        return text.upper()
+    # Adaptive Card occasionally posts dict-like strings:
+    # "{'material': 'S_GICF'}" or '{"material":"S_GICF"}'
+    try:
+        parsed = ast.literal_eval(text)
+        if isinstance(parsed, dict):
+            candidate = str(parsed.get("material") or parsed.get("value") or "").strip()
+            if candidate:
+                return candidate.upper()
+    except Exception:
+        pass
+    # Fallback: extract first material-looking token like S_GICF
+    match = re.search(r"\bS_[A-Z0-9_]+\b", text.upper())
+    if match:
+        return match.group(0)
+    return text.upper()
+
+
 def _post_sku_confirmation_card(contract_number: str) -> dict:
     try:
         app.logger.info("[sku] Loading contract context for %s", contract_number)
@@ -493,7 +545,7 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
 
         division = (context.get("division") or "").strip().upper()
         if division not in SUPPORTED_SKU_DIVISIONS:
-            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC and CRCA SKU confirmation are enabled for now", contract_number))
+            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC, CRCA, and GI SKU confirmation are enabled for now", contract_number))
             return {"status": "unsupported_division", "detail": f"division={division or '<blank>'}"}
 
         if not context.get("sold_to_party") or not context.get("ship_to_party"):
@@ -1049,39 +1101,103 @@ def extract_message_text(body: dict) -> str:
 
 
 def normalise_confirm_payload(payload: dict) -> dict:
-    """Accept direct card fields or common Power Automate response wrappers."""
-    candidates = [
-        payload,
-        payload.get("data") if isinstance(payload.get("data"), dict) else None,
-        payload.get("body") if isinstance(payload.get("body"), dict) else None,
-        payload.get("response") if isinstance(payload.get("response"), dict) else None,
-    ]
+    """Accept direct card fields or common Power Automate response wrappers.
+
+    Some PA payloads include ticket_id at top-level but edited card fields under
+    body/data/response. Return a merged canonical dict so required values are not lost.
+    """
+    if not isinstance(payload, dict):
+        return {}
+
+    candidates = []
+
+    def _add(obj):
+        if isinstance(obj, dict):
+            candidates.append(obj)
+
+    _add(payload)
+    _add(payload.get("data"))
+    _add(payload.get("body"))
+    _add(payload.get("response"))
+
     body = payload.get("body")
     if isinstance(body, dict):
-        candidates.extend(
-            [
-                body.get("data") if isinstance(body.get("data"), dict) else None,
-                body.get("response") if isinstance(body.get("response"), dict) else None,
-            ]
-        )
+        _add(body.get("data"))
+        _add(body.get("response"))
+
     response = payload.get("response")
     if isinstance(response, dict):
-        candidates.append(response.get("data") if isinstance(response.get("data"), dict) else None)
+        _add(response.get("data"))
 
+    key_aliases = {
+        "ticket_id": ["ticket_id", "ticket id", "ticketid"],
+        "contract_number": ["contract_number", "contract number", "contractnumber"],
+        "contract_type": ["contract_type", "contract type", "contracttype"],
+        "contract_source": ["contract_source", "contract source", "contractsource"],
+        "sold_to_party": ["sold_to_party", "sold to party", "soldtoparty"],
+        "ship_to_party": ["ship_to_party", "ship to party", "shiptoparty"],
+        "ship_plant_code": ["ship_plant_code", "ship plant code", "shipplantcode"],
+        "payer": ["payer"],
+        "division": ["division"],
+        "distribution_channel": ["distribution_channel", "distribution channel", "distributionchannel"],
+        "po_number": ["po_number", "po number", "ponumber"],
+        "po_date": ["po_date", "po date", "podate"],
+        "contract_end_date": ["contract_end_date", "contract end date", "contractenddate"],
+        "request_id": ["request_id", "request id", "requestid"],
+        "stage": ["stage"],
+    }
+
+    def _canon(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+    merged = {}
+    # Prefer later wrappers (usually deeper PA body/data payloads) over top-level.
     for candidate in candidates:
-        if isinstance(candidate, dict) and (
-            candidate.get("ticket_id")
-            or candidate.get("contract_number")
-            or candidate.get("request_id")
-            or candidate.get("stage")
+        lowered = {_canon(k): v for k, v in candidate.items()}
+        for target, aliases in key_aliases.items():
+            for alias in aliases:
+                value = lowered.get(_canon(alias))
+                if value is not None and str(value).strip() != "":
+                    merged[target] = value
+                    break
+
+        # Keep existing passthrough fields used by SKU routes.
+        for key in (
+            "material",
+            "description",
+            "sku_description",
+            "qty",
+            "order_qty",
+            "customer_order_category",
+            "eq_specif_grp",
+            "eq_specifi",
+            "eq_sub_grade",
+            "end_appn",
+            "rh_req",
+            "cust_req_date",
+            "width",
+            "thickness",
+            "length",
+            "edge_con",
+            "thick_tol_type",
+            "oil_req",
+            "plant_code",
         ):
-            return candidate
+            value = candidate.get(key)
+            if value is not None and str(value).strip() != "":
+                merged[key] = value
+
+    if merged:
+        return merged
     return payload
 
 
 def validate_confirmed_contract_details(data: dict) -> list[str]:
     missing = []
-    required_fields = [("Distribution Channel", "distribution_channel")]
+    required_fields = [
+        ("Contract Type", "contract_type"),
+        ("Distribution Channel", "distribution_channel"),
+    ]
     for label, key in required_fields:
         if is_blank_card_value(data.get(key)):
             missing.append(label)

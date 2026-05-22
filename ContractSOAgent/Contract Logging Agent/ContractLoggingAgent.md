@@ -616,7 +616,7 @@ New files:
 
 | File | Purpose |
 |------|---------|
-| `Tools/hrc_master_lookup.py` | Calls the Power Automate HRC master helper flow through `HRC_MASTER_LOOKUP_URL` for `get_sku_choices` and `get_sku_details`. Normalizes BP/SP codes with leading zero support. |
+| `Tools/master_lookup.py` | Calls the division-specific Power Automate master helper flow for `get_sku_choices` and `get_sku_details`. Normalizes BP/SP codes with leading zero support. |
 | `Tools/contract_memory.py` | Reads/writes unified local or GCS memory, finds contract context by Contract Number, stores pending SKU choices, and stores final confirmed SKU details. |
 
 New routes:
@@ -928,7 +928,7 @@ New helper modules:
 
 | File | Purpose |
 |------|---------|
-| `Tools/hrc_master_lookup.py` | Calls Power Automate helper flow using `HRC_MASTER_LOOKUP_URL`. |
+| `Tools/master_lookup.py` | Calls the division-specific Power Automate helper flow. |
 | `Tools/contract_memory.py` | Finds created contract context from memory/GCS and stores confirmed SKU details. |
 
 Important boundary:
@@ -1075,7 +1075,7 @@ Fixes applied:
 | Fix | Result |
 |-----|--------|
 | Reconfigured full `TEAMS_SKU_LOG_WEBHOOK_URL` in Cloud Run | Signed SKU card-post URL now has `sp`, `sv`, and `sig` |
-| Added fallback handling in `Tools/hrc_master_lookup.py` | Empty/non-JSON/failed lookup responses now return empty `materials`, `skus`, and `rows` instead of crashing |
+| Added fallback handling in `Tools/master_lookup.py` | Empty/non-JSON/failed lookup responses now return empty `materials`, `skus`, and `rows` instead of crashing |
 | Enabled Cloud Run `--no-cpu-throttling` | Background SKU card worker can continue after Teams acknowledgement |
 
 Deployment result:
@@ -2315,7 +2315,7 @@ Expected response for SKU details:
 
 Next implementation step:
 
-- After the user creates/saves the CRCA Power Automate flow and shares its HTTP URL, add `CRCA_MASTER_LOOKUP_URL` to Cloud Run and update `hrc_master_lookup.py` to choose the lookup URL by division.
+- After the user creates/saves the CRCA Power Automate flow and shares its HTTP URL, add `CRCA_MASTER_LOOKUP_URL` to Cloud Run and update `master_lookup.py` to choose the lookup URL by division.
 
 ### CRCA Master Lookup URL Wiring - 2026-05-18
 
@@ -2339,7 +2339,7 @@ jsw-contract-logging-agent-00062-wlx
 
 Code change:
 
-- `hrc_master_lookup.py` now chooses lookup URL by division:
+- `master_lookup.py` now chooses lookup URL by division:
   - `CRCA` -> `CRCA_MASTER_LOOKUP_URL`
   - all other supported/default lookup calls -> `HRC_MASTER_LOOKUP_URL`
 
@@ -2400,3 +2400,69 @@ Additional hardening:
   - from short/3 retries
   - to longer/6 retries
 - This reduces stale-read false negatives right after Salesforce Save.
+
+## 27. Production Confirmation - 2026-05-19
+
+Final status confirmed by user testing:
+
+- HRC flow is working in Teams and on JSW Steel portal.
+- CRCA flow is working in Teams and on JSW Steel portal.
+- Success card now posts correctly after line creation, with correct line item details.
+- Example validated success: contract `00176967`, line item `00176967_90`, material `S_CRCACF`, qty `130`.
+
+Deployment status:
+
+- Cloud Build for commit `2d54acd` completed successfully.
+- Cloud Run latest ready revision:
+
+```text
+jsw-contract-logging-agent-00069-gxj
+```
+
+- Service URL:
+
+```text
+https://jsw-contract-logging-agent-blajkpcmsa-el.a.run.app
+```
+
+Conclusion:
+
+- Contract Logging Agent production flow is now stable for both supported SKU paths:
+  - HRC
+  - CRCA
+
+## 28. Session 2026-05-20 / 2026-05-21 - GI Flow Build Status
+
+Status:
+
+- GI contract creation path has been deployed separately without intentionally changing the working HRC and CRCA SKU paths.
+- GI SKU lookup / confirmation path is still under active debugging.
+
+What is working:
+
+- Separate GI Power Automate lookup flow was created:
+  - `GI Master Lookup API`
+- Dedicated lookup URL was wired so GI rollout stays isolated from HRC / CRCA behavior.
+- GI contract creation from Teams can reach the main agent and create the Contract successfully.
+- Filtering issue on GI SKU list was reduced by tightening the Power Automate filter around:
+  - `B P CODE`
+  - `S P CODE`
+  - `DIVISION`
+  - `MATERIAL`
+  - `DESCRIPTION`
+
+What is still failing:
+
+- The Teams confirmation card for GI is still not receiving the expected prefilled values for downstream fields such as:
+  - `Customer Order Category`
+  - `Eq. Specification Group`
+  - `Eq. Specification`
+  - `Eq. Sub Specification`
+  - `End Application`
+- The issue is currently believed to be in the Power Automate response/mapping path rather than the JSW portal automation itself.
+
+Current safe position:
+
+- HRC remains working.
+- CRCA remains working.
+- GI is not yet considered complete for production SKU-line creation until the prefilled values appear correctly on the Teams confirmation card and the line-item run is tested locally end to end.

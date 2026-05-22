@@ -32,6 +32,12 @@ SKU_PRODUCT_BY_MATERIAL = {
         "S_CRCACF": "CRCA Coil - (S_CRCACF)",
         "S_CRCASF": "CRCA Sheet - (S_CRCASF)",
     },
+    "GI": {
+        "S_GICF": "GI Coil - (S_GICF)",
+        "S_GISF": "GI Sheet - (S_GISF)",
+        "S_HRGICF": "HR GI Coil - (S_HRGICF)",
+        "S_ZMCF": "ZM Coil - (S_ZMCF)",
+    },
 }
 
 SKU_DETAIL_FIELDS = {
@@ -104,6 +110,39 @@ SKU_DETAIL_FIELDS = {
             ("thickness", "Thickness"),
             ("length", "Length"),
             ("thick_tol_type", "Thickness Tolerance Type"),
+            ("oil_req", "Oil Required"),
+        ],
+    },
+    "GI": {
+        "default": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("rh_req", "RH REQ"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("edge_con", "Edge Condition"),
+            ("oil_req", "Oil Required"),
+        ],
+        "S_GISF": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("rh_req", "RH REQ"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("length", "Length"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("edge_con", "Edge Condition"),
             ("oil_req", "Oil Required"),
         ],
     },
@@ -770,12 +809,28 @@ def _choices(values: list) -> list[dict]:
     seen = set()
     choices = []
     for value in values:
-        text = str(value or "").strip()
+        text = _choice_text(value)
         if not text or text in seen:
             continue
         seen.add(text)
         choices.append({"title": text, "value": text})
     return choices
+
+
+def _choice_text(value) -> str:
+    if isinstance(value, dict):
+        return _row_get(
+            value,
+            "material",
+            "MATERIAL",
+            "Material",
+            "value",
+            "description",
+            "DESCRIPTION",
+            "sku",
+            "SKU",
+        )
+    return str(value or "").strip()
 
 
 def _materials_from_skus(skus: list[dict]) -> list[str]:

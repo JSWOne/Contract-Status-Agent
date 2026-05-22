@@ -1,6 +1,6 @@
 # ContractSOAgent — Master Orchestrator
 > **JSW One Platforms | Salesforce Automation System**
-> Version: 1.1.0 | Owner: Milind Kumar | Last Updated: 2026-05-18
+> Version: 1.1.1 | Owner: Milind Kumar | Last Updated: 2026-05-21
 
 ---
 
@@ -29,6 +29,10 @@ In practical terms, the project is trying to make three things happen reliably:
 | **Contract Logging Agent** | Create a new Salesforce Contract from a Teams-confirmed Jira `O360` ticket. | Runs the Teams confirmation card flow, reads/prepares ticket details, fills the JSW Steel Community Salesforce portal, extracts the generated Contract Number, and posts the result back to Teams. |
 | **Contract Status Agent** | Keep Salesforce Contract status visible and synchronized. | Runs every 15 minutes, scrapes recent Salesforce Contracts, captures approval-stage details, updates the OneDrive Excel tracker, compares against the previous snapshot, and posts Teams cards only for status changes. |
 | **Jira Ticket Agent** | Centralize incident handling and Jira-created SO Request Teams notifications. | Creates, updates, and closes Jira tickets for agent failures, and posts Jira-created Teams cards only when Jira Request Type is exactly `SO Request`; `Order support` and other request types are skipped. |
+
+Latest planned additions:
+- Jira Ticket Agent is now being extended with a separate Power Automate flow to maintain a live Excel tracker for all `O360` tickets in `LIVE O360 Tickets`, with upsert by Jira key to prevent duplicates.
+- GI is being added as the next Contract Logging SKU product-type flow, but its prefilled Teams confirmation values are still under validation before it can be treated as complete like HRC and CRCA.
 
 The SO Logging Agent and SO Status Agent remain part of the broader architecture, but the current production focus is Contract Logging, Contract Status, and Jira Ticket Agent.
 
@@ -310,7 +314,7 @@ Decision:
 Latest update:
 
 - `CRCA_MASTER_LOOKUP_URL` has been added to Cloud Run.
-- `hrc_master_lookup.py` now selects the Power Automate lookup URL by division.
+- `master_lookup.py` now selects the Power Automate lookup URL by division.
 - Cloud Run env-var configuration revision `jsw-contract-logging-agent-00062-wlx` is healthy.
 - The CRCA PA flow is reachable, but currently still returns zero `materials`, zero `skus`, and zero `rows`; the PA filter/Select/Response logic must be corrected before Teams will show the SKU dropdown.
 
@@ -321,6 +325,57 @@ Next test after CRCA PA URL is configured:
 3. Confirm the second CRCA details card.
 4. Verify Salesforce Contract Line Item creation.
 5. Run one HRC regression test to confirm the HRC path is unaffected.
+
+---
+
+## 10.1 GI Prefill Stabilization (May 20, 2026)
+
+Issue observed:
+
+- GI SKU details card was posting, but prefilled fields were blank in Teams.
+- Direct API checks showed GI PA endpoint returned `200` for `get_materials` and `get_skus`, but returned upstream `502` for `get_sku_details`.
+- Because of this, backend received no `rows` and fell back to manual (blank) details.
+
+What was implemented:
+
+- Added GI-specific card field configuration so GI does not inherit HRC detail layout.
+- Added robust row normalization for PA payloads already in place (`dict`, JSON string, or single-quoted dict string).
+- Added GI-only safe fallback in lookup:
+  - If division is `GI` and PA details returns empty rows, service can read GI master Excel locally (when configured) and derive first exact match row using:
+    - `B P CODE`, `S P CODE`, `SHIP PLANT`, `MATERIAL`, `DESCRIPTION`.
+- Added new optional env vars in `.env.example`:
+  - `CRCA_MASTER_LOOKUP_URL`
+  - `GI_MASTER_LOOKUP_URL`
+  - `GI_MASTER_XLSX_PATH` (local fallback only)
+
+Local verification completed:
+
+- Tested GI details fetch with:
+  - Division: `GI`
+  - BP: `0040041568`
+  - SP: `0040036473`
+  - Plant: `1044`
+  - Material: `S_GICF`
+  - SKU: `1.20X1000-GP-P1-STL-80.-CR6`
+- Result: `rows=1` and prefill values resolved (example):
+  - `customer_order_category=STD`
+  - `eq_specif_grp=BIS`
+  - `eq_specifi=277_2018`
+  - `eq_sub_grade=GP`
+  - `end_appn=GE`
+  - `plant_code=1044`
+  - `width=1000.000`
+  - `thickness=1.200`
+  - `thick_tol_type=TCTMAX`
+  - `edge_con=TE`
+  - `oil_req=N`
+
+Scope safety:
+
+- HRC and CRCA runtime paths are unchanged.
+- GI fallback is gated and runs only when:
+  - division is `GI`, and
+  - PA details rows are empty.
 
 ---
 

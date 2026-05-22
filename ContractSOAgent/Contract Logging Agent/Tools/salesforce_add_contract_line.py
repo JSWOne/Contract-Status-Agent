@@ -505,18 +505,83 @@ def _select_product_name(page, value: str) -> None:
     if not value:
         return
     log.info("Selecting Product Name: '%s'", value)
+    inp = _product_name_input(page)
     try:
-        inp = page.locator('input[placeholder="Please Select product"]').first
-        inp.scroll_into_view_if_needed(timeout=5_000)
-        inp.click(timeout=5_000)
-        page.wait_for_timeout(1_000)
-        # Dropdown appears automatically — click the matching item
-        page.locator('li, [role="option"]').filter(
+        current = (inp.input_value(timeout=1_000) or "").strip()
+        if current:
+            log.info("  Product Name already populated: '%s'", current)
+            return
+    except Exception:
+        pass
+    inp.scroll_into_view_if_needed(timeout=5_000)
+    inp.click(timeout=5_000)
+    page.wait_for_timeout(1_000)
+    option_scope = _product_name_option_scope(page, inp)
+
+    # Strategy 1: exact/near-exact visible label match.
+    try:
+        option_scope.filter(
             has_text=re.compile(re.escape(value), re.IGNORECASE)
         ).first.click(timeout=8_000)
-        log.info("  Product Name selected")
-    except Exception as e:
-        log.warning("  Product Name failed: %s", e)
+        log.info("  Product Name selected via exact label")
+        return
+    except Exception:
+        pass
+
+    # Strategy 2: match by material code token in parentheses, e.g. (S_GICF).
+    token_match = re.search(r"\(([^)]+)\)", str(value or ""))
+    token = token_match.group(1).strip() if token_match else ""
+    if token:
+        try:
+            option_scope.filter(
+                has_text=re.compile(re.escape(token), re.IGNORECASE)
+            ).first.click(timeout=8_000)
+            log.info("  Product Name selected via material token: %s", token)
+            return
+        except Exception:
+            pass
+
+    # Strategy 3: type + Enter fallback (some orgs resolve lookup on Enter).
+    try:
+        inp.fill("")
+        inp.type(value, delay=20)
+        inp.press("Enter")
+        page.wait_for_timeout(1_200)
+        current = (inp.input_value(timeout=1_000) or "").strip()
+        if current:
+            log.info("  Product Name selected via typed Enter fallback: '%s'", current)
+            return
+    except Exception:
+        pass
+
+    raise RuntimeError(f"Product Name selection failed for '{value}'")
+
+
+def _product_name_input(page):
+    # Prefer the Product Name field inside New Contract Line modal.
+    try:
+        handle = page.locator(
+            "xpath=//label[normalize-space()='Product Name']/following::input[1]"
+        ).first
+        if handle.count() and handle.is_visible(timeout=1_500):
+            return handle
+    except Exception:
+        pass
+    # Fallback to old selector.
+    return page.locator('input[placeholder="Please Select product"]').first
+
+
+def _product_name_option_scope(page, input_locator):
+    # Scope options to the Product Name lookup component to avoid global search options.
+    try:
+        component = input_locator.locator("xpath=ancestor::c-reusable-lookup[1]")
+        if component.count():
+            scoped = component.locator('li, [role="option"], lightning-base-combobox-item')
+            if scoped.count():
+                return scoped
+    except Exception:
+        pass
+    return page.locator('li, [role="option"], lightning-base-combobox-item')
 
 
 def _select_lwc_combobox(page, label: str, value: str) -> None:

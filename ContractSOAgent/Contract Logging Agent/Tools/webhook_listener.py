@@ -962,6 +962,7 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
 
 def _row_value(row: dict, *keys: str) -> str:
     lowered = {str(k).strip().lower(): v for k, v in row.items()}
+    canonical = {_canonical_row_key(k): v for k, v in row.items()}
     for key in keys:
         value = row.get(key)
         if value not in (None, ""):
@@ -969,7 +970,16 @@ def _row_value(row: dict, *keys: str) -> str:
         value = lowered.get(key.strip().lower())
         if value not in (None, ""):
             return str(value).strip()
+        value = canonical.get(_canonical_row_key(key))
+        if value not in (None, ""):
+            return str(value).strip()
     return ""
+
+
+def _canonical_row_key(value: str) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"_x([0-9a-f]{4})_", lambda m: chr(int(m.group(1), 16)), text)
+    return re.sub(r"[^a-z0-9]", "", text)
 
 
 def process_ticket(ticket_id: str) -> dict:

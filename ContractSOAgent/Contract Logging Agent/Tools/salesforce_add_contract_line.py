@@ -458,6 +458,11 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
         page.wait_for_timeout(1_500)
         _screenshot(page, "14b_supply_plant")
 
+    # GI/ZM required fields.
+    _fill_lookup_text_by_label(page, "S Brand", data.get("s_brand", ""))
+    page.wait_for_timeout(800)
+    _screenshot(page, "14c_s_brand")
+
     # 10. Width
     _fill_input_by_label(page, "Width", data.get("width", ""))
     page.wait_for_timeout(1_000)
@@ -479,13 +484,21 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     page.wait_for_timeout(1_000)
     _screenshot(page, "16d_oil_required")
 
+    _select_lwc_combobox(page, "Spangle Type", data.get("spangle_type", ""))
+    page.wait_for_timeout(1_000)
+    _screenshot(page, "16e_spangle_type")
+
+    _fill_input_by_label(page, "Zin_Coating Min(GSM)", data.get("zinc_coating_min", ""))
+    page.wait_for_timeout(800)
+    _screenshot(page, "16f_zinc_coating_min")
+
     _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
     page.wait_for_timeout(1_500)
     _screenshot(page, "17_edge_condition")
 
     # 13. S Plant — required for some HRC variants.
     # CRCA flow already maps/uses Supply Plant / Depot and forcing S Plant causes flaky overlay issues.
-    if plant_raw and division != "CRCA":
+    if plant_raw and division not in {"CRCA", "GI"}:
         _select_s_plant(page, plant_code, plant_raw)
         page.wait_for_timeout(1_500)
         _screenshot(page, "17b_s_plant")
@@ -593,6 +606,10 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
         return
     log.info("Selecting combobox '%s' = '%s'", label, value)
 
+    if _select_nearest_native_select(page, label, value):
+        log.info("  selected via nearest native <select>")
+        return
+
     # Strategy 0: label row -> native <select> (high priority for Customer Order Category)
     try:
         selected = page.evaluate(
@@ -680,7 +697,54 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
     except Exception:
         pass
 
+    if _select_nearest_native_select(page, label, value):
+        log.info("  selected via nearest native <select>")
+        return
+
     log.warning("  could not select combobox '%s' = '%s'", label, value)
+
+
+def _select_nearest_native_select(page, label: str, value: str) -> bool:
+    try:
+        return bool(page.evaluate(
+            """({ labelText, val }) => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const compact = (s) => norm(s).replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const target = compact(labelText);
+                const labels = Array.from(document.querySelectorAll('label, span, div'))
+                    .filter((el) => {
+                        if (!visible(el)) return false;
+                        const text = compact(el.textContent);
+                        return text === target || text.includes(target);
+                    });
+                const selects = Array.from(document.querySelectorAll('select')).filter(visible);
+                for (const labelEl of labels) {
+                    const labelBox = labelEl.getBoundingClientRect();
+                    const ranked = selects
+                        .map((sel) => ({ sel, box: sel.getBoundingClientRect() }))
+                        .filter(({ box }) => box.top >= labelBox.top - 12 && box.top <= labelBox.bottom + 100)
+                        .sort((a, b) => Math.abs(a.box.top - labelBox.bottom) - Math.abs(b.box.top - labelBox.bottom));
+                    for (const { sel } of ranked) {
+                        const opts = Array.from(sel.options || []);
+                        const match = opts.find((o) => norm(o.textContent) === norm(val) || norm(o.value) === norm(val));
+                        if (!match) continue;
+                        sel.value = match.value;
+                        sel.dispatchEvent(new Event('input', { bubbles: true }));
+                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+                return false;
+            }""",
+            {"labelText": label, "val": value},
+        ))
+    except Exception:
+        return False
 
 
 def _select_lwc_combobox_first_option(page, label: str) -> None:
@@ -1111,6 +1175,9 @@ def _fill_supply_plant(page, value: str, plant_raw: str = "") -> None:
                 ).first.click(timeout=4_000)
             else:
                 page.locator('table a, .lookup__list a').first.click(timeout=4_000)
+            page.wait_for_timeout(1_000)
+            if _supply_plant_lookup_modal_open(page):
+                _save_supply_plant_lookup_modal(page)
             log.info("  Supply Plant selected (first table result)")
         except Exception as e2:
             log.warning("  Supply Plant fallback failed: %s", e2)
@@ -1125,9 +1192,40 @@ def _supply_plant_lookup_modal_open(page) -> bool:
         return False
 
 
+def _wait_supply_plant_lookup_closed(page, timeout_ms: int = 12_000) -> bool:
+    deadline = time.time() + (timeout_ms / 1000)
+    while time.time() < deadline:
+        if not _supply_plant_lookup_modal_open(page):
+            return True
+        page.wait_for_timeout(500)
+    return not _supply_plant_lookup_modal_open(page)
+
+
 def _select_supply_plant_result(page, value: str, plant_raw: str = "") -> bool:
     """Select the exact Supply Plant result from the JSW Locations full lookup modal."""
     plant_keyword = _plant_keyword(plant_raw or value)
+    code = str(value or "").strip()
+
+    # Salesforce lookup modals need a real browser click on the DESCRIPTION link.
+    # JS element.click() can find the row but leave the modal open.
+    for pattern in [code, plant_keyword]:
+        if not pattern:
+            continue
+        try:
+            row = page.locator("table tbody tr").filter(
+                has_text=re.compile(re.escape(pattern), re.IGNORECASE)
+            ).first
+            if row.is_visible(timeout=2_000):
+                link = row.locator("a").first
+                link.scroll_into_view_if_needed(timeout=2_000)
+                link.click(timeout=5_000, force=True)
+                if _wait_supply_plant_lookup_closed(page):
+                    return True
+                if _save_supply_plant_lookup_modal(page):
+                    return True
+        except Exception:
+            pass
+
     # Preferred path: click DESCRIPTION link for the row whose CODE matches.
     try:
         selected = page.evaluate(
@@ -1153,11 +1251,12 @@ def _select_supply_plant_result(page, value: str, plant_raw: str = "") -> bool:
                 }
                 return false;
             }""",
-            {"code": str(value or "").strip(), "keyword": plant_keyword},
+            {"code": code, "keyword": plant_keyword},
         )
         if selected:
-            page.wait_for_timeout(1_200)
-            if not _supply_plant_lookup_modal_open(page):
+            if _wait_supply_plant_lookup_closed(page):
+                return True
+            if _save_supply_plant_lookup_modal(page):
                 return True
     except Exception:
         pass
@@ -1195,23 +1294,65 @@ def _select_supply_plant_result(page, value: str, plant_raw: str = "") -> bool:
                 }
                 return false;
             }""",
-            {"code": str(value or "").strip(), "keyword": plant_keyword},
+            {"code": code, "keyword": plant_keyword},
         )
         if selected:
-            page.wait_for_timeout(1_000)
-            return not _supply_plant_lookup_modal_open(page)
+            if _wait_supply_plant_lookup_closed(page):
+                return True
+            if _save_supply_plant_lookup_modal(page):
+                return True
     except Exception:
         pass
     return False
+
+
+def _save_supply_plant_lookup_modal(page) -> bool:
+    try:
+        clicked = page.evaluate(
+            """() => {
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const modals = Array.from(document.querySelectorAll('.modal-container, .slds-modal__container'))
+                    .filter(visible);
+                const modal = modals[modals.length - 1] || document;
+                const buttons = Array.from(modal.querySelectorAll('button, input[type="button"], input[type="submit"]'))
+                    .filter(visible);
+                const save = buttons.reverse().find((btn) => {
+                    const text = (btn.innerText || btn.value || btn.title || btn.getAttribute('aria-label') || '').trim();
+                    return text.toLowerCase() === 'save';
+                });
+                if (!save) return false;
+                save.click();
+                return true;
+            }"""
+        )
+        if clicked:
+            if _wait_supply_plant_lookup_closed(page):
+                return True
+    except Exception:
+        pass
+    try:
+        modal = page.locator(".modal-container, .slds-modal__container").filter(
+            has_text=re.compile(r"Supply Plant\s*/\s*Depot", re.IGNORECASE)
+        ).last
+        btn = modal.locator('button:has-text("Save")').last
+        btn.scroll_into_view_if_needed(timeout=2_000)
+        btn.click(timeout=5_000, force=True)
+        return _wait_supply_plant_lookup_closed(page)
+    except Exception:
+        return False
 
 
 def _input_by_label(page, label: str):
     try:
         handle = page.evaluate_handle(
             """(labelText) => {
-                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
                 const labels = Array.from(document.querySelectorAll('label, span, div'))
-                    .filter((el) => norm(el.textContent) === labelText);
+                    .filter((el) => norm(el.textContent) === norm(labelText));
                 for (const label of labels) {
                     const root = label.closest('div, lightning-layout-item, c-reusable-lookup') || label.parentElement;
                     const input = root && root.querySelector('input');
@@ -1360,6 +1501,37 @@ def _fill_input_by_label(page, label: str, value: str) -> None:
         pass
 
     log.warning("  could not fill input '%s'", label)
+
+
+def _fill_lookup_text_by_label(page, label: str, value: str) -> None:
+    """Fill a lookup-style text field by label and select the matching/first result."""
+    if not value:
+        return
+    log.info("Filling lookup '%s' = '%s'", label, value)
+    try:
+        inp = _input_by_label(page, label)
+        if inp is None:
+            if label.strip().lower() == "s brand":
+                inp = page.locator('input[placeholder*="Select Brand"], input[placeholder*="Brand"], input[aria-label*="Brand"]').first
+            else:
+                inp = page.locator(f'input[placeholder*="{label}"], input[aria-label*="{label}"]').first
+        inp.scroll_into_view_if_needed(timeout=4_000)
+        inp.click(timeout=4_000, force=True)
+        page.wait_for_timeout(300)
+        inp.fill(str(value))
+        page.wait_for_timeout(1_000)
+        try:
+            page.locator('li, [role="option"], lightning-base-combobox-item, .slds-listbox__item').filter(
+                has_text=re.compile(re.escape(str(value)), re.IGNORECASE)
+            ).first.click(timeout=4_000, force=True)
+        except Exception:
+            try:
+                page.keyboard.press("Enter")
+            except Exception:
+                pass
+        page.wait_for_timeout(800)
+    except Exception as exc:
+        log.warning("  could not fill lookup '%s': %s", label, exc)
 
 
 def _fill_date_by_label(page, label: str, value: str) -> None:

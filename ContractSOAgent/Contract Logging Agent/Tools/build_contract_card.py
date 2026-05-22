@@ -128,6 +128,9 @@ SKU_DETAIL_FIELDS = {
             ("thick_tol_type", "Thickness Tolerance Type"),
             ("edge_con", "Edge Condition"),
             ("oil_req", "Oil Required"),
+            ("s_brand", "S Brand"),
+            ("spangle_type", "Spangle Type"),
+            ("zinc_coating_min", "Zin_Coating Min(GSM)"),
         ],
         "S_GISF": [
             ("customer_order_category", "Customer Order Category"),
@@ -144,6 +147,9 @@ SKU_DETAIL_FIELDS = {
             ("thick_tol_type", "Thickness Tolerance Type"),
             ("edge_con", "Edge Condition"),
             ("oil_req", "Oil Required"),
+            ("s_brand", "S Brand"),
+            ("spangle_type", "Spangle Type"),
+            ("zinc_coating_min", "Zin_Coating Min(GSM)"),
         ],
     },
 }

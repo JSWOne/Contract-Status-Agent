@@ -82,6 +82,7 @@ SALESFORCE_PRODUCT_BY_MATERIAL = {
 PLANT_NAME_BY_CODE = {
     "1001": "1001 - Vijayanagar Works",
     "1014": "1014 - Tarapur Works",
+    "1044": "1044 - JSCPL - DHAR",
 }
 
 _MEMORY_DEFAULT = {
@@ -666,6 +667,9 @@ def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) ->
         "edge_con": details.get("edge_con", ""),
         "thick_tol_type": details.get("thick_tol_type", ""),
         "oil_req": details.get("oil_req", ""),
+        "s_brand": details.get("s_brand", ""),
+        "spangle_type": details.get("spangle_type", ""),
+        "zinc_coating_min": details.get("zinc_coating_min", ""),
         "plant_code": plant_code,
     }
     return line_data
@@ -955,6 +959,9 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
             "edge_con": _row_value(row, "EDGE_CON", "EDGE CON", "edge_con"),
             "thick_tol_type": _row_value(row, "THICK_TOL_TYPE", "Thickness Tolerance Type", "thick_tol_type"),
             "oil_req": _row_value(row, "OIL_REQ", "Oil Required", "oil_req"),
+            "s_brand": _row_value(row, "BRAND", "S Brand", "s_brand"),
+            "spangle_type": _row_value(row, "S_SPANGLE_TYPE", "Spangle Type", "spangle_type"),
+            "zinc_coating_min": _row_value(row, "ZINC COATING", "ZINC_COAT", "Zin_Coating Min(GSM)", "zinc_coating_min"),
         }
     )
     return details

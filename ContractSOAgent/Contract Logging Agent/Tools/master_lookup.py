@@ -194,6 +194,9 @@ def _gi_details_from_local_master(payload: dict[str, Any]) -> dict[str, Any]:
                 "edge_con": col("EDGE_CON"),
                 "thick_tol_type": col("THICK_TOL_TYPE"),
                 "oil_req": col("OIL_REQ"),
+                "s_brand": col("BRAND"),
+                "spangle_type": col("S_SPANGLE_TYPE"),
+                "zinc_coating_min": col("ZINC COATING") or col("ZINC_COAT"),
                 "description": str(payload.get("description") or "").strip(),
                 "material": str(payload.get("material") or "").strip(),
             }

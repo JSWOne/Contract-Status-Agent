@@ -1198,6 +1198,9 @@ def normalise_confirm_payload(payload: dict) -> dict:
             "edge_con",
             "thick_tol_type",
             "oil_req",
+            "s_brand",
+            "spangle_type",
+            "zinc_coating_min",
             "plant_code",
         ):
             value = candidate.get(key)

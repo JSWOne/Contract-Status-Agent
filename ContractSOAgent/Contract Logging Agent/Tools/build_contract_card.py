@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 DIVISION_PRODUCTS = {
     "CRCA":         ["CRCA Coil - (S_CRCACF)", "CRCA Sheet - (S_CRCASF)"],
     "GI":           ["GI Coil - (S_GICF)", "GI Sheet - (S_GISF)", "HR GI Coil - (S_HRGICF)", "ZM Coil - (S_ZMCF)"],
-    "GL":           ["GL Coil - (S_GLCF)"],
+    "GL":           ["Galvalume Coil - (S_GLCF)"],
     "HRC":          ["HR Coil - (S_HRCF)", "HR Sheet & Plate - (S_HRCTLF)"],
     "HRPO":         ["HRPO Coil - (S_HRPKLCF)", "HRPO Sheet - (S_HRPKLSF)"],
     "PPGI":         ["PPGI Coil - (S_PPGICF)", "PPGI Sheet - (S_PPGISF)"],
@@ -37,6 +37,9 @@ SKU_PRODUCT_BY_MATERIAL = {
         "S_GISF": "GI Sheet - (S_GISF)",
         "S_HRGICF": "HR GI Coil - (S_HRGICF)",
         "S_ZMCF": "ZM Coil - (S_ZMCF)",
+    },
+    "GL": {
+        "S_GLCF": "Galvalume Coil - (S_GLCF)",
     },
 }
 
@@ -150,6 +153,26 @@ SKU_DETAIL_FIELDS = {
             ("s_brand", "S Brand"),
             ("spangle_type", "Spangle Type"),
             ("zinc_coating_min", "Zin_Coating Min(GSM)"),
+        ],
+    },
+    "GL": {
+        "default": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("plant_code", "Supply Plant / Depot"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("s_brand", "S Brand"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("oil_req", "Oil Required"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("al_zn_coating_min", "AL ZN Coating GSM MIN"),
+            ("sleeve_required", "Sleeve Required?"),
+            ("edge_con", "Edge Condition"),
+            ("spangle_type", "Spangle Type"),
         ],
     },
 }

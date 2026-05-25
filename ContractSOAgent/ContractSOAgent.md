@@ -32,7 +32,8 @@ In practical terms, the project is trying to make three things happen reliably:
 
 Latest planned additions:
 - Jira Ticket Agent is now being extended with a separate Power Automate flow to maintain a live Excel tracker for all `O360` tickets in `LIVE O360 Tickets`, with upsert by Jira key to prevent duplicates.
-- GI is being added as the next Contract Logging SKU product-type flow, but its prefilled Teams confirmation values are still under validation before it can be treated as complete like HRC and CRCA.
+- GI Contract Logging SKU product-type flow is complete end to end: Teams SKU selection, details confirmation, GI master lookup, Salesforce Contract Line Item creation, and Teams success card are working.
+- GL is the next Contract Logging SKU product-type flow to be built after GI.
 
 The SO Logging Agent and SO Status Agent remain part of the broader architecture, but the current production focus is Contract Logging, Contract Status, and Jira Ticket Agent.
 
@@ -376,6 +377,56 @@ Scope safety:
 - GI fallback is gated and runs only when:
   - division is `GI`, and
   - PA details rows are empty.
+
+### GI Teams Card Validation - 2026-05-22
+
+Status:
+
+- GI first SKU card is now working in Teams.
+- `Material Type` is populated from the GI master lookup.
+- `SKU / Description` now appears as a dropdown instead of a blank text box.
+- Example validated context:
+  - Contract: `00177339`
+  - Jira Ticket: `O360-15805`
+  - BP: `0040041568`
+  - SP: `0040036473`
+  - Ship Plant: `1044`
+  - Material: `S_GICF`
+
+Root cause of first-card SKU issue:
+
+- The lookup helper returned as soon as the Power Automate flow returned `materials`.
+- For GI, the Power Automate flow returns SKU descriptions through a second-stage `get_skus` action.
+- `Tools/master_lookup.py` now treats `materials` without `skus` as partial data and calls `get_skus` for each material before building the Teams card.
+
+Second-card prefill status:
+
+- GI second confirmation card is now receiving prefilled values for:
+  - `Customer Order Category`
+  - `Eq. Specification Group`
+  - `Eq. Specification`
+  - `Eq. Sub Specification`
+  - `End Application`
+  - `Supply Plant / Depot`
+  - `Customer Requested Date`
+  - `Width`
+  - `Thickness`
+  - `Thickness Tolerance Type`
+  - `Edge Condition`
+  - `Oil Required`
+- The remaining blank-field issue was caused by dots in the GI master Excel header names, for example `Eq.Specif.Grp`, `Eq.Specifi.`, and `Eq.Sub_Grade`.
+- The GI master headers were corrected to dot-free names:
+  - `EqSpecifGrp`
+  - `EqSpecifi`
+  - `EqSub_Grade`
+- After this Excel header correction, the Teams second card prefilled those fields correctly.
+
+Current GI position:
+
+- GI card flow is working through both Teams cards.
+- GI `Confirm SKU Details` now creates the Salesforce Contract Line Item and returns the Teams success card.
+- GI product type is complete for the current Contract Logging SKU scope.
+- Next product-type build target: GL.
 
 ---
 

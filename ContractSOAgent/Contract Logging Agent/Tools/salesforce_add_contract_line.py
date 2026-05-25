@@ -492,6 +492,14 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     page.wait_for_timeout(800)
     _screenshot(page, "16f_zinc_coating_min")
 
+    _fill_gl_coating_min(page, data.get("al_zn_coating_min", ""))
+    page.wait_for_timeout(800)
+    _screenshot(page, "16g_al_zn_coating_min")
+
+    _select_lwc_combobox(page, "Sleeve Required?", data.get("sleeve_required", ""))
+    page.wait_for_timeout(800)
+    _screenshot(page, "16h_sleeve_required")
+
     _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
     page.wait_for_timeout(1_500)
     _screenshot(page, "17_edge_condition")
@@ -1731,6 +1739,44 @@ def _fill_input_by_label(page, label: str, value: str) -> None:
         pass
 
     log.warning("  could not fill input '%s'", label)
+
+
+def _fill_gl_coating_min(page, value: str) -> None:
+    """Fill GL coating minimum field; portal label may vary slightly by layout."""
+    if not value:
+        return
+    for label in (
+        "AL ZN Coating GSM MIN",
+        "AL ZN Coating Min(GSM)",
+        "AL ZN Coating Min",
+        "AL ZN COATING MIN",
+    ):
+        try:
+            log.info("Filling GL coating minimum '%s' = '%s'", label, value)
+            for sel in [f'input[aria-label="{label}"]', f'input[aria-label*="{label}"]']:
+                loc = page.locator(sel).first
+                if loc.is_visible(timeout=1_000):
+                    loc.scroll_into_view_if_needed()
+                    loc.fill(value)
+                    log.info("  filled via aria-label: %s", sel)
+                    return
+            label_el = page.locator(f'label:has-text("{label}")').first
+            for_id = label_el.get_attribute("for", timeout=1_000)
+            if for_id:
+                page.locator(f'input#{for_id}').fill(value)
+                log.info("  filled via label[for]")
+                return
+            inp = label_el.locator(
+                'xpath=following-sibling::div[1]//input | following-sibling::*[1]//input'
+            )
+            if inp.count() > 0:
+                inp.first.scroll_into_view_if_needed()
+                inp.first.fill(value)
+                log.info("  filled via label sibling div//input")
+                return
+        except Exception:
+            pass
+    log.warning("  could not fill GL AL ZN coating minimum")
 
 
 def _fill_lookup_text_by_label(page, label: str, value: str) -> None:

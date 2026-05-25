@@ -71,7 +71,7 @@ MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
 GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
 
-SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI"}
+SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI", "GL"}
 
 SALESFORCE_PRODUCT_BY_MATERIAL = {
     "HRC": {
@@ -87,6 +87,9 @@ SALESFORCE_PRODUCT_BY_MATERIAL = {
         "S_GISF": "GI Sheet - (S_GISF)",
         "S_HRGICF": "HR GI Coil - (S_HRGICF)",
         "S_ZMCF": "ZM Coil - (S_ZMCF)",
+    },
+    "GL": {
+        "S_GLCF": "Galvalume Coil - (S_GLCF)",
     },
 }
 
@@ -503,7 +506,7 @@ def _handle_sku_details_confirm_payload(data: dict):
 
 def _is_hrc_details_payload(data: dict) -> bool:
     stage = (data.get("stage") or "").strip().lower()
-    if stage in {"hrc_sku_details", "crca_sku_details", "sku_details"}:
+    if stage in {"hrc_sku_details", "crca_sku_details", "gi_sku_details", "gl_sku_details", "sku_details"}:
         return True
     detail_keys = {
         "customer_order_category",
@@ -519,6 +522,11 @@ def _is_hrc_details_payload(data: dict) -> bool:
         "edge_con",
         "thick_tol_type",
         "oil_req",
+        "s_brand",
+        "spangle_type",
+        "zinc_coating_min",
+        "al_zn_coating_min",
+        "sleeve_required",
     }
     return any(str(data.get(key) or "").strip() for key in detail_keys)
 
@@ -557,7 +565,7 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
 
         division = (context.get("division") or "").strip().upper()
         if division not in SUPPORTED_SKU_DIVISIONS:
-            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC, CRCA, and GI SKU confirmation are enabled for now", contract_number))
+            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC, CRCA, GI, and GL SKU confirmation are enabled for now", contract_number))
             return {"status": "unsupported_division", "detail": f"division={division or '<blank>'}"}
 
         if not context.get("sold_to_party") or not context.get("ship_to_party"):
@@ -656,7 +664,7 @@ def _hrc_details_to_salesforce_line_data(contract_number: str, details: dict) ->
 def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) -> dict:
     context = _enrich_context_from_jira(find_contract_context(contract_number) or {"contract_number": contract_number})
     material = (details.get("material") or "").strip().upper()
-    division = (context.get("division") or details.get("division") or "").strip().upper() or _division_from_material(material)
+    division = (details.get("division") or context.get("division") or "").strip().upper() or _division_from_material(material)
     plant_code = details.get("plant_code") or context.get("ship_plant_code", "")
     plant_code = _normalise_plant_for_salesforce(plant_code)
     customer_requested_date = _customer_requested_date_from_context(context) or details.get("cust_req_date", "")
@@ -681,6 +689,8 @@ def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) ->
         "s_brand": details.get("s_brand", ""),
         "spangle_type": details.get("spangle_type", ""),
         "zinc_coating_min": details.get("zinc_coating_min", ""),
+        "al_zn_coating_min": details.get("al_zn_coating_min", ""),
+        "sleeve_required": details.get("sleeve_required", ""),
         "plant_code": plant_code,
     }
     return line_data
@@ -964,7 +974,8 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
             "eq_sub_grade": _row_value(row, "EqSub_Grade", "EQ SUB GRADE", "eq_sub_grade"),
             "end_appn": _row_value(row, "END_APPN", "END APPN", "end_appn"),
             "rh_req": _row_value(row, "RH REQ", "rh_req") or "N",
-            "plant_code": _row_value(row, "SHIP PLANT", "ship_plant", "ship_plant_code", "plant_code", "Plant Code"),
+            "plant_code": _row_value(row, "SHIP PLANT", "ship_plant", "ship_plant_code", "plant_code", "Plant Code")
+            or details["plant_code"],
             "cust_req_date": context_customer_requested_date
             or _row_value(row, "Customer Requested Date", "CUST REQ DATE", "cust_req_date")
             or details["cust_req_date"],
@@ -977,6 +988,8 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
             "s_brand": _row_value(row, "BRAND", "S Brand", "s_brand"),
             "spangle_type": _row_value(row, "S_SPANGLE_TYPE", "Spangle Type", "spangle_type"),
             "zinc_coating_min": _row_value(row, "ZINC COATING", "ZINC_COAT", "Zin_Coating Min(GSM)", "zinc_coating_min"),
+            "al_zn_coating_min": _row_value(row, "AL ZN COATING MIN", "AL_ZN_COATING_MIN", "AL ZN Coating GSM MIN", "al_zn_coating_min"),
+            "sleeve_required": _row_value(row, "SO_SLEEVE_REQD", "Sleeve Required?", "Sleeve Required", "sleeve_required"),
         }
     )
     return details

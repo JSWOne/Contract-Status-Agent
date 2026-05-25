@@ -290,4 +290,6 @@ def _lookup_env_for_division(division: str) -> str:
         return "CRCA_MASTER_LOOKUP_URL"
     if division == "GI":
         return "GI_MASTER_LOOKUP_URL"
+    if division == "GL":
+        return "GL_MASTER_LOOKUP_URL"
     return "HRC_MASTER_LOOKUP_URL"

@@ -2427,16 +2427,17 @@ https://jsw-contract-logging-agent-blajkpcmsa-el.a.run.app
 
 Conclusion:
 
-- Contract Logging Agent production flow is now stable for both supported SKU paths:
+- Contract Logging Agent production flow is now stable for supported SKU paths:
   - HRC
   - CRCA
+  - GI
 
 ## 28. Session 2026-05-20 / 2026-05-21 - GI Flow Build Status
 
 Status:
 
 - GI contract creation path has been deployed separately without intentionally changing the working HRC and CRCA SKU paths.
-- GI SKU lookup / confirmation path is still under active debugging.
+- GI SKU lookup / confirmation card path is now working through both Teams cards as of 2026-05-22.
 
 What is working:
 
@@ -2450,19 +2451,72 @@ What is working:
   - `DIVISION`
   - `MATERIAL`
   - `DESCRIPTION`
+- The first GI SKU card now populates:
+  - `Material Type`
+  - `SKU / Description`
+- `Tools/hrc_master_lookup.py` was renamed to `Tools/master_lookup.py` because the lookup helper now supports multiple product types, not only HRC.
+- `Tools/master_lookup.py` now handles GI's two-stage lookup behavior:
+  - first-stage material lookup
+  - second-stage `get_skus` lookup for each material when descriptions are not returned in the first response.
 
-What is still failing:
+Second-card prefill fix:
 
-- The Teams confirmation card for GI is still not receiving the expected prefilled values for downstream fields such as:
+- The GI second confirmation card is now receiving expected prefilled values for:
   - `Customer Order Category`
   - `Eq. Specification Group`
   - `Eq. Specification`
   - `Eq. Sub Specification`
   - `End Application`
-- The issue is currently believed to be in the Power Automate response/mapping path rather than the JSW portal automation itself.
+  - `Supply Plant / Depot`
+  - `Customer Requested Date`
+  - `Width`
+  - `Thickness`
+  - `Thickness Tolerance Type`
+  - `Edge Condition`
+  - `Oil Required`
+- Root cause for the three blank specification fields:
+  - GI master Excel header names contained dots, for example `Eq.Specif.Grp`, `Eq.Specifi.`, and `Eq.Sub_Grade`.
+  - Power Automate/Excel connector field mapping did not resolve those dotted headers cleanly.
+- Fix applied in master data:
+  - Renamed the GI master headers to dot-free names:
+    - `EqSpecifGrp`
+    - `EqSpecifi`
+    - `EqSub_Grade`
+- After this master-file header correction, the Teams second card prefilled `BIS`, `277_2018`, and `GP` correctly for the tested GI SKU.
 
 Current safe position:
 
 - HRC remains working.
 - CRCA remains working.
-- GI is not yet considered complete for production SKU-line creation until the prefilled values appear correctly on the Teams confirmation card and the line-item run is tested locally end to end.
+- GI is complete for the current SKU scope:
+  - first SKU selection card is working
+  - second confirmation card is working
+  - GI master lookup fields, including Spangle Type, are populated
+  - Salesforce Contract Line Item creation is working
+  - Teams success card returns the created Contract Line Item
+- Next product-type build target: GL.
+
+## 29. Session 2026-05-25 - GI Completion and GL Next Scope
+
+Status:
+
+- GI product type is completed for the Contract Logging SKU line-item flow.
+- The deployed Teams flow successfully creates GI Salesforce Contract Line Items and posts the success card back to Teams.
+- Cloud Run logging was updated so INFO-level breadcrumbs are visible for future debugging.
+
+Completed GI scope:
+
+- GI material and SKU selection card.
+- GI SKU details lookup from the GI master file / Power Automate flow.
+- GI confirmation card with required mapped fields:
+  - `Eq. Specification Group`
+  - `Eq. Specification`
+  - `Eq. Sub Specification`
+  - `Spangle Type`
+  - `Zin_Coating Min(GSM)`
+- GI Salesforce portal line-item creation, including dropdown handling for GI-specific picklists.
+
+Next scope:
+
+- Start GL product-type flow after GI.
+- Keep GL rollout isolated from HRC, CRCA, and GI by using product-specific lookup/configuration where required.

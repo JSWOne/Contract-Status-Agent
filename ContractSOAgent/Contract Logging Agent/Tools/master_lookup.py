@@ -12,6 +12,7 @@ import os
 import json
 import ast
 import re
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from dotenv import load_dotenv
 
 
 load_dotenv(Path(__file__).with_name(".env"))
+log = logging.getLogger(__name__)
 
 
 def normalise_party_code(value: str) -> str:
@@ -214,7 +216,21 @@ def _call_lookup(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         response = requests.post(url, json=payload, timeout=90)
         response.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        log.warning(
+            "%s master lookup failed for action=%s bp=%s sp=%s plant=%s: %s",
+            division or "SKU",
+            payload.get("action"),
+            payload.get("bp_code"),
+            payload.get("sp_code"),
+            payload.get("plant_code") or payload.get("ship_plant_code"),
+            exc,
+        )
+        if division == "GL":
+            raise RuntimeError(
+                "GL master lookup failed. Check that the GL Power Automate flow is turned on "
+                "and the trigger URL configured in Cloud Run is current."
+            ) from exc
         return {"status": "success", "materials": [], "skus": [], "rows": []}
 
     if not (response.text or "").strip():

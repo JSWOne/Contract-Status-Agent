@@ -848,9 +848,13 @@ def _is_sku_request_duplicate(contract_number: str, request_id: str) -> bool:
     ts = _parse_iso_dt(item.get("timestamp", ""))
     if not ts:
         return False
-    if ts < datetime.now(timezone.utc) - timedelta(minutes=30):
+    now = datetime.now(timezone.utc)
+    if ts < now - timedelta(minutes=30):
         return False
-    return str(item.get("status", "")).strip() in {"in_progress", "success"}
+    status = str(item.get("status", "")).strip()
+    if status == "in_progress" and ts < now - timedelta(minutes=10):
+        return False
+    return status in {"in_progress", "success"}
 
 
 def _context_from_memory_or_payload(contract_number: str, data: dict) -> dict:

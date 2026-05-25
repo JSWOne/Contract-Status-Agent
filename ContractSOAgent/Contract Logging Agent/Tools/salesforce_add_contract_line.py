@@ -722,6 +722,9 @@ def _select_gi_recorded_picklist(page, label: str, value: str) -> bool:
     if not value:
         return False
     try:
+        if _select_combobox_role_value(page, label, value):
+            return True
+
         if label == "Spangle Type":
             page.get_by_role("combobox", name="Spangle Type").click(timeout=5_000)
             page.wait_for_timeout(400)
@@ -743,6 +746,43 @@ def _select_gi_recorded_picklist(page, label: str, value: str) -> bool:
         return True
     except Exception as exc:
         log.warning("  recorded GI picklist failed for '%s' = '%s': %s", label, value, exc)
+        return False
+
+
+def _select_combobox_role_value(page, label: str, value: str) -> bool:
+    """Select a Salesforce combobox by ARIA role using native select/keyboard paths."""
+    try:
+        combo = page.get_by_role("combobox", name=label).first
+        combo.scroll_into_view_if_needed(timeout=3_000)
+        try:
+            combo.select_option(label=value, timeout=2_000)
+            page.wait_for_timeout(500)
+            if _field_contains_value(page, label, value):
+                return True
+        except Exception:
+            pass
+        try:
+            combo.select_option(value=value, timeout=2_000)
+            page.wait_for_timeout(500)
+            if _field_contains_value(page, label, value):
+                return True
+        except Exception:
+            pass
+
+        combo.click(timeout=5_000)
+        page.wait_for_timeout(300)
+        if label == "Edge Condition":
+            combo.click(timeout=5_000)
+            page.wait_for_timeout(300)
+        page.keyboard.type(str(value), delay=60)
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(700)
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(500)
+        return _field_contains_value(page, label, value)
+    except Exception as exc:
+        log.warning("  role combobox select failed for '%s' = '%s': %s", label, value, exc)
         return False
 
 

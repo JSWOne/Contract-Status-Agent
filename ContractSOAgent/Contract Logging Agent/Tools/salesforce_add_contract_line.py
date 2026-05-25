@@ -745,7 +745,7 @@ def _select_gi_recorded_picklist(page, label: str, value: str) -> bool:
         page.wait_for_timeout(500)
         return True
     except Exception as exc:
-        log.warning("  recorded GI picklist failed for '%s' = '%s': %s", label, value, exc)
+        log.debug("  recorded GI picklist fallback missed for '%s' = '%s': %s", label, value, exc)
         return False
 
 
@@ -1046,7 +1046,7 @@ def _click_dropdown_option(page, value: str, timeout: int = 6_000) -> None:
             has_text=re.compile(re.escape(value), re.IGNORECASE)
         ).first.click(timeout=timeout)
     except Exception as e:
-        log.warning("  could not click dropdown option '%s': %s", value, e)
+        log.debug("  dropdown option fallback missed for '%s': %s", value, e)
 
 
 def _fill_part_number(page, value: str) -> bool:

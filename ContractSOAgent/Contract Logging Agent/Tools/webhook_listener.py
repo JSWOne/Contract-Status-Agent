@@ -8,6 +8,7 @@ import ast
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import threading
@@ -50,6 +51,16 @@ from notify_teams import post_card, post_text, post_sku_card
 load_dotenv(Path(__file__).with_name(".env"))
 
 app = Flask(__name__)
+LOG_LEVEL_NAME = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger().setLevel(LOG_LEVEL)
+app.logger.setLevel(LOG_LEVEL)
+logging.getLogger("salesforce_add_contract_line").setLevel(LOG_LEVEL)
+
 TICKET_PATTERN = re.compile(r"\b(O360-\d+)\b", re.IGNORECASE)
 CONTRACT_PATTERN = re.compile(r"\b(\d{7,9})\b")
 BASE_DIR = Path(__file__).parent.parent

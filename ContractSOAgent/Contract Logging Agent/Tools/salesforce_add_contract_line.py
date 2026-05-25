@@ -606,8 +606,21 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
         return
     log.info("Selecting combobox '%s' = '%s'", label, value)
 
+    if label in {"Oil Required", "Edge Condition", "Spangle Type"}:
+        if _select_gi_recorded_picklist(page, label, value):
+            log.info("  selected via recorded GI picklist flow")
+            return
+
     if _select_nearest_native_select(page, label, value):
         log.info("  selected via nearest native <select>")
+        return
+
+    if _select_combobox_near_label(page, label, value):
+        log.info("  selected via label-scoped combobox")
+        return
+
+    if _select_combobox_by_coordinates(page, label, value):
+        log.info("  selected via coordinate-scoped combobox")
         return
 
     # Strategy 0: label row -> native <select> (high priority for Customer Order Category)
@@ -702,6 +715,161 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
         return
 
     log.warning("  could not select combobox '%s' = '%s'", label, value)
+
+
+def _select_gi_recorded_picklist(page, label: str, value: str) -> bool:
+    """Select GI picklists using the stable ARIA flow captured from Playwright Inspector."""
+    if not value:
+        return False
+    try:
+        if label == "Spangle Type":
+            page.get_by_role("combobox", name="Spangle Type").click(timeout=5_000)
+            page.wait_for_timeout(400)
+            _click_visible_picklist_value(page, value)
+        elif label == "Edge Condition":
+            page.get_by_role("combobox", name="Edge Condition").click(timeout=5_000)
+            page.wait_for_timeout(300)
+            page.get_by_role("combobox", name="Edge Condition").click(timeout=5_000)
+            page.wait_for_timeout(400)
+            _click_visible_picklist_value(page, value)
+        elif label == "Oil Required":
+            page.get_by_role("combobox", name="Oil Required").click(timeout=5_000)
+            page.wait_for_timeout(400)
+            page.get_by_role("option", name=value, exact=True).click(timeout=5_000)
+        else:
+            return False
+
+        page.wait_for_timeout(500)
+        return True
+    except Exception as exc:
+        log.warning("  recorded GI picklist failed for '%s' = '%s': %s", label, value, exc)
+        return False
+
+
+def _click_visible_picklist_value(page, value: str) -> None:
+    pattern = re.compile(r"^\s*" + re.escape(value) + r"\s*$", re.IGNORECASE)
+    for selector in [
+        "lightning-base-combobox-item:visible",
+        "[role='option']:visible",
+        ".slds-listbox__item:visible",
+        "span:visible",
+    ]:
+        try:
+            page.locator(selector).filter(has_text=pattern).first.click(timeout=3_000)
+            return
+        except Exception:
+            pass
+    page.get_by_role("option", name=value, exact=True).click(timeout=5_000)
+
+
+def _select_combobox_near_label(page, label: str, value: str) -> bool:
+    """Open the combobox that belongs to an exact label, then select its value."""
+    try:
+        opened = page.evaluate(
+            """({ labelText, val }) => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const target = compact(labelText);
+                const labels = Array.from(document.querySelectorAll('label, span'))
+                    .filter((el) => visible(el) && compact(el.textContent) === target);
+                for (const labelEl of labels) {
+                    let root = labelEl.closest('.slds-form-element, lightning-layout-item, div');
+                    for (let i = 0; i < 6 && root; i++, root = root.parentElement) {
+                        const select = Array.from(root.querySelectorAll('select')).find(visible);
+                        if (select) {
+                            const opts = Array.from(select.options || []);
+                            const match = opts.find((o) => compact(o.textContent) === compact(val) || compact(o.value) === compact(val));
+                            if (match) {
+                                select.value = match.value;
+                                select.dispatchEvent(new Event('input', { bubbles: true }));
+                                select.dispatchEvent(new Event('change', { bubbles: true }));
+                                return 'selected';
+                            }
+                        }
+                        const triggers = Array.from(root.querySelectorAll(
+                            'button[role="combobox"], button[aria-haspopup="listbox"], button[aria-label], .slds-combobox__input, input[role="combobox"]'
+                        )).filter(visible);
+                        if (triggers.length) {
+                            triggers[triggers.length - 1].click();
+                            return 'opened';
+                        }
+                    }
+                }
+                return '';
+            }""",
+            {"labelText": label, "val": value},
+        )
+        if opened == "selected":
+            return True
+        if opened != "opened":
+            return False
+        page.wait_for_timeout(700)
+        for sel in [
+            f'[role="option"][data-value="{value}"]',
+            f'[role="option"][data-mainfield="{value}"]',
+            'lightning-base-combobox-item',
+            '[role="option"]',
+            '.slds-listbox__item',
+        ]:
+            try:
+                page.locator(sel).filter(
+                    has_text=re.compile(r'^\s*' + re.escape(value) + r'\s*$', re.IGNORECASE)
+                ).first.click(timeout=4_000)
+                page.wait_for_timeout(500)
+                return True
+            except Exception:
+                pass
+        return False
+    except Exception:
+        return False
+
+
+def _select_combobox_by_coordinates(page, label: str, value: str) -> bool:
+    """Fallback for Lightning controls whose label/control live inside shadow DOM."""
+    try:
+        label_loc = page.get_by_text(label, exact=True).last
+        if not label_loc.is_visible(timeout=1_500):
+            return False
+        box = label_loc.bounding_box(timeout=2_000)
+        if not box:
+            return False
+        # Salesforce lays these controls directly below the label. Click near the right
+        # edge so native/lightning dropdown arrows open reliably.
+        click_x = box["x"] + 600
+        click_y = box["y"] + box["height"] + 18
+        page.mouse.click(click_x, click_y)
+        page.wait_for_timeout(700)
+        for selector in [
+            f'[role="option"][data-value="{value}"]',
+            f'[role="option"][data-mainfield="{value}"]',
+            'lightning-base-combobox-item',
+            '[role="option"]',
+            '.slds-listbox__item',
+            f'text="{value}"',
+        ]:
+            try:
+                page.locator(selector).filter(
+                    has_text=re.compile(r'^\s*' + re.escape(value) + r'\s*$', re.IGNORECASE)
+                ).first.click(timeout=4_000)
+                page.wait_for_timeout(600)
+                return True
+            except Exception:
+                pass
+        try:
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(200)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(600)
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
 
 
 def _select_nearest_native_select(page, label: str, value: str) -> bool:

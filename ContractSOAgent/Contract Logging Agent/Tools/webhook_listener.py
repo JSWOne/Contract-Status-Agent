@@ -471,9 +471,9 @@ def _handle_sku_details_confirm_payload(data: dict):
         post_sku_card(build_hrc_sku_validation_failed_card(f"Please fill {', '.join(missing)} before confirming SKU details", contract_number))
         return jsonify({"status": "validation_error", "missing_fields": missing}), 400
 
-    details = dict(data)
     context = _enrich_context_from_jira(_context_from_memory_or_payload(contract_number, data))
     request_id = str(data.get("request_id") or "").strip()
+    details = _backfill_sku_details_from_pending_row(dict(data), context, request_id)
     if request_id and _is_sku_request_duplicate(contract_number, request_id):
         app.logger.info("[sku] duplicate sku-details-confirm ignored: contract=%s request_id=%s", contract_number, request_id)
         safe_write_memory_step(
@@ -502,6 +502,48 @@ def _handle_sku_details_confirm_payload(data: dict):
 
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({"status": "success", "contract_number": contract_number})
+
+
+def _backfill_sku_details_from_pending_row(details: dict, context: dict, request_id: str) -> dict:
+    """Teams can omit lower-card inputs; recover them from the saved master row."""
+    if not request_id:
+        return details
+    pending = get_sku_pending_request(request_id)
+    if not pending:
+        return details
+
+    rows = pending.get("rows") or []
+    if not rows:
+        return details
+
+    target_material = (details.get("material") or pending.get("selection", {}).get("material") or "").strip()
+    target_description = (details.get("description") or pending.get("selection", {}).get("description") or "").strip()
+    row = _matching_master_row(rows, target_material, target_description) or rows[0]
+    row_details = _details_from_row(row, target_material, context)
+
+    backfilled = []
+    for key, value in row_details.items():
+        if is_blank_card_value(details.get(key)) and not is_blank_card_value(value):
+            details[key] = value
+            backfilled.append(key)
+    if backfilled:
+        app.logger.info(
+            "[sku] %s: backfilled missing details from pending master row: %s",
+            details.get("contract_number", ""),
+            ", ".join(backfilled),
+        )
+    return details
+
+
+def _matching_master_row(rows: list[dict], material: str, description: str) -> dict:
+    material_norm = material.strip().upper()
+    description_norm = description.strip().upper()
+    for row in rows:
+        row_material = _row_value(row, "MATERIAL", "material").strip().upper()
+        row_description = _row_value(row, "DESCRIPTION", "description").strip().upper()
+        if row_material == material_norm and row_description == description_norm:
+            return row
+    return {}
 
 
 def _is_hrc_details_payload(data: dict) -> bool:

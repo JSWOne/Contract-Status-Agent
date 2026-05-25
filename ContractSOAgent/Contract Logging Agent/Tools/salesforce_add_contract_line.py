@@ -498,7 +498,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
 
     # 13. S Plant — required for some HRC variants.
     # CRCA flow already maps/uses Supply Plant / Depot and forcing S Plant causes flaky overlay issues.
-    if plant_raw and division not in {"CRCA", "GI"}:
+    if plant_raw and division != "CRCA":
         _select_s_plant(page, plant_code, plant_raw)
         page.wait_for_timeout(1_500)
         _screenshot(page, "17b_s_plant")
@@ -1417,6 +1417,24 @@ def _select_s_plant(page, plant_code: str, plant_raw: str = "") -> None:
     except Exception:
         pass
 
+    def _click_first_real_option() -> bool:
+        """Fallback for GI where S Plant option text may differ from the depot name."""
+        for sel in ['[role="option"]', 'lightning-base-combobox-item', '.slds-listbox__item']:
+            try:
+                options = page.locator(sel)
+                count = min(options.count(), 20)
+                for idx in range(count):
+                    option = options.nth(idx)
+                    text = " ".join((option.inner_text(timeout=800) or "").split())
+                    if not text or "--None--" in text:
+                        continue
+                    option.click(timeout=3_000)
+                    log.info("  S Plant selected first available option: '%s'", text)
+                    return True
+            except Exception:
+                pass
+        return False
+
     # Open the S Plant dropdown, then click the option containing the keyword
     for btn_sel in ['button[aria-label="S Plant"]', 'button[aria-label*="S Plant"]']:
         try:
@@ -1435,6 +1453,8 @@ def _select_s_plant(page, plant_code: str, plant_raw: str = "") -> None:
                         return
                     except Exception:
                         pass
+                if _click_first_real_option():
+                    return
         except Exception:
             pass
 
@@ -1445,6 +1465,8 @@ def _select_s_plant(page, plant_code: str, plant_raw: str = "") -> None:
             if loc.is_visible(timeout=800):
                 options = loc.locator('option').all_inner_texts()
                 match = next((o for o in options if keyword.lower() in o.lower()), None)
+                if not match:
+                    match = next((o for o in options if o.strip() and "--None--" not in o), None)
                 if match:
                     loc.select_option(label=match)
                     log.info("  S Plant selected via <select>: '%s'", match)

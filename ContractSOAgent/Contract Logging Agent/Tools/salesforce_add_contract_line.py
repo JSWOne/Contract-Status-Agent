@@ -496,13 +496,18 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     page.wait_for_timeout(800)
     _screenshot(page, "16g_al_zn_coating_min")
 
-    _select_lwc_combobox(page, "Sleeve Required?", data.get("sleeve_required", ""))
+    _scroll_contract_line_form(page, 850)
     page.wait_for_timeout(800)
-    _screenshot(page, "16h_sleeve_required")
+    _screenshot(page, "16h_other_specification_scroll")
 
     _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
     page.wait_for_timeout(1_500)
+    _close_open_dropdown(page)
     _screenshot(page, "17_edge_condition")
+
+    _select_sleeve_required(page, data.get("sleeve_required", ""))
+    page.wait_for_timeout(800)
+    _screenshot(page, "17a_sleeve_required")
 
     # 13. S Plant — required for some HRC variants.
     # CRCA flow already maps/uses Supply Plant / Depot and forcing S Plant causes flaky overlay issues.
@@ -614,7 +619,7 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
         return
     log.info("Selecting combobox '%s' = '%s'", label, value)
 
-    if label in {"Oil Required", "Edge Condition", "Spangle Type"}:
+    if label in {"Oil Required", "Edge Condition", "Spangle Type", "Sleeve Required?"}:
         if _select_gi_recorded_picklist(page, label, value):
             log.info("  selected via recorded GI picklist flow")
             return
@@ -745,6 +750,10 @@ def _select_gi_recorded_picklist(page, label: str, value: str) -> bool:
             _click_visible_picklist_value(page, value)
         elif label == "Oil Required":
             page.get_by_role("combobox", name="Oil Required").click(timeout=5_000)
+            page.wait_for_timeout(400)
+            page.get_by_role("option", name=value, exact=True).click(timeout=5_000)
+        elif label == "Sleeve Required?":
+            page.get_by_role("combobox", name=re.compile(r"^Sleeve Required\\??$", re.IGNORECASE)).click(timeout=5_000)
             page.wait_for_timeout(400)
             page.get_by_role("option", name=value, exact=True).click(timeout=5_000)
         else:
@@ -1233,6 +1242,92 @@ def _open_dropdown_near_label(page, label: str) -> bool:
             label,
         )
         return bool(clicked)
+    except Exception:
+        return False
+
+
+def _select_sleeve_required(page, value: str) -> None:
+    """Select GL Sleeve Required from the actual labeled field, avoiding nearby HR_CONSP."""
+    if not value:
+        return
+    log.info("Selecting Sleeve Required? = '%s'", value)
+    try:
+        page.locator("text=Other Specification").first.scroll_into_view_if_needed(timeout=3_000)
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+    for label in ("Sleeve Required?", "Sleeve Required"):
+        if _open_combobox_in_field_container(page, label):
+            page.wait_for_timeout(500)
+            _click_visible_picklist_value(page, value)
+            page.wait_for_timeout(500)
+            log.info("  Sleeve Required selected via exact field container")
+            return
+    try:
+        # Fixed local/headless viewport fallback for the visible Sleeve Required field
+        # in the GL Other Specification section.
+        page.mouse.click(925, 440)
+        page.wait_for_timeout(500)
+        _click_visible_picklist_value(page, value)
+        page.wait_for_timeout(500)
+        log.info("  Sleeve Required selected via GL fixed-position fallback")
+        return
+    except Exception:
+        pass
+    log.warning("  could not select Sleeve Required? = '%s'", value)
+
+
+def _close_open_dropdown(page) -> None:
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
+def _scroll_contract_line_form(page, delta_y: int) -> None:
+    try:
+        page.mouse.wheel(0, delta_y)
+    except Exception:
+        pass
+
+
+def _open_combobox_in_field_container(page, label: str) -> bool:
+    """Open a combobox scoped to the field container for a possibly off-screen label."""
+    try:
+        return bool(page.evaluate(
+            """(labelText) => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const target = compact(labelText);
+                const candidates = Array.from(document.querySelectorAll('label, span, div'))
+                    .filter((el) => {
+                        const text = compact(el.textContent);
+                        return text === target || (text.includes(target) && text.length <= target.length + 6);
+                    })
+                    .sort((a, b) => compact(a.textContent).length - compact(b.textContent).length);
+                for (const labelEl of candidates) {
+                    labelEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+                    let root = labelEl.closest('.slds-form-element');
+                    if (!root) root = labelEl.closest('lightning-layout-item, div');
+                    for (let i = 0; i < 5 && root; i++, root = root.parentElement) {
+                        const triggers = Array.from(root.querySelectorAll(
+                            'button[role="combobox"], button[aria-haspopup="listbox"], button[aria-label], .slds-combobox__input, input[role="combobox"]'
+                        )).filter((el) => {
+                            const box = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                        });
+                        if (triggers.length) {
+                            triggers[triggers.length - 1].click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""",
+            label,
+        ))
     except Exception:
         return False
 

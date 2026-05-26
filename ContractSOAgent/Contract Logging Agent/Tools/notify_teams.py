@@ -66,7 +66,13 @@ def post_to_sku_log(payload: dict) -> bool:
                 headers={"Connection": "close"},
             )
             response.raise_for_status()
-            log.info("Posted SKU Teams payload on attempt %s", attempt)
+            response_preview = (response.text or "").strip().replace("\n", " ")[:300]
+            log.info(
+                "Posted SKU Teams payload on attempt %s status=%s response=%s",
+                attempt,
+                response.status_code,
+                response_preview or "<empty>",
+            )
             return True
         except requests.RequestException as exc:
             last_exc = exc

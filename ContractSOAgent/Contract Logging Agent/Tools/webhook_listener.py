@@ -621,6 +621,14 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
             context.get("ship_to_party", ""),
             context.get("ship_plant_code", ""),
         )
+        app.logger.info(
+            "[sku] %s lookup result: division=%s materials=%s skus=%s rows=%s",
+            contract_number,
+            division,
+            len(lookup.get("materials") or []),
+            len(lookup.get("skus") or []),
+            len(lookup.get("rows") or []),
+        )
         card = build_hrc_sku_selection_card(context, lookup)
         post_sku_card(card)
         safe_write_memory_step(

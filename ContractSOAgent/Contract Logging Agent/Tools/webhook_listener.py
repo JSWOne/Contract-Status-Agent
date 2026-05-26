@@ -96,6 +96,7 @@ SALESFORCE_PRODUCT_BY_MATERIAL = {
 PLANT_NAME_BY_CODE = {
     "1001": "1001 - Vijayanagar Works",
     "1014": "1014 - Tarapur Works",
+    "1018": "1018 - Kalmeshwar Works",
     "1044": "1044 - JSCPL - DHAR",
 }
 

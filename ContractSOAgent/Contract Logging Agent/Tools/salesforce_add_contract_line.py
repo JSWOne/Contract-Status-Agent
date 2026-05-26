@@ -29,6 +29,13 @@ PORTAL_WIDTH = 1920
 PORTAL_HEIGHT = 1080
 PORTAL_VIEWPORT = {"width": PORTAL_WIDTH, "height": PORTAL_HEIGHT}
 
+PLANT_NAME_BY_CODE = {
+    "1001": "1001 - Vijayanagar Works",
+    "1014": "1014 - Tarapur Works",
+    "1018": "1018 - Kalmeshwar Works",
+    "1044": "1044 - JSCPL - DHAR",
+}
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -442,7 +449,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     _screenshot(page, "13_order_qty")
 
     # Extract plant info for Supply Plant / Depot and optional S Plant selection.
-    plant_raw = data.get("plant_code", "")
+    plant_raw = _normalise_plant_name(data.get("plant_code", ""))
     plant_code = plant_raw.split()[0].rstrip("-") if plant_raw else ""
     division = str(data.get("division", "")).strip().upper()
 
@@ -476,38 +483,41 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     # Length is optional for this flow; skip by design.
 
     # 12. Edge Condition — LWC combobox
-    _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
-    page.wait_for_timeout(1_000)
-    _screenshot(page, "16c_thick_tol_type")
+    if division == "GL":
+        _fill_gl_specific_fields(page, data)
+    else:
+        _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
+        page.wait_for_timeout(1_000)
+        _screenshot(page, "16c_thick_tol_type")
 
-    _select_lwc_combobox(page, "Oil Required", data.get("oil_req", ""))
-    page.wait_for_timeout(1_000)
-    _screenshot(page, "16d_oil_required")
+        _select_lwc_combobox(page, "Oil Required", data.get("oil_req", ""))
+        page.wait_for_timeout(1_000)
+        _screenshot(page, "16d_oil_required")
 
-    _select_lwc_combobox(page, "Spangle Type", data.get("spangle_type", ""))
-    page.wait_for_timeout(1_000)
-    _screenshot(page, "16e_spangle_type")
+        _select_lwc_combobox(page, "Spangle Type", data.get("spangle_type", ""))
+        page.wait_for_timeout(1_000)
+        _screenshot(page, "16e_spangle_type")
 
-    _fill_input_by_label(page, "Zin_Coating Min(GSM)", data.get("zinc_coating_min", ""))
-    page.wait_for_timeout(800)
-    _screenshot(page, "16f_zinc_coating_min")
+        _fill_input_by_label(page, "Zin_Coating Min(GSM)", data.get("zinc_coating_min", ""))
+        page.wait_for_timeout(800)
+        _screenshot(page, "16f_zinc_coating_min")
 
-    _fill_gl_coating_min(page, data.get("al_zn_coating_min", ""))
-    page.wait_for_timeout(800)
-    _screenshot(page, "16g_al_zn_coating_min")
+        _fill_gl_coating_min(page, data.get("al_zn_coating_min", ""))
+        page.wait_for_timeout(800)
+        _screenshot(page, "16g_al_zn_coating_min")
 
-    _scroll_contract_line_form(page, 850)
-    page.wait_for_timeout(800)
-    _screenshot(page, "16h_other_specification_scroll")
+        _scroll_contract_line_form(page, 850)
+        page.wait_for_timeout(800)
+        _screenshot(page, "16h_other_specification_scroll")
 
-    _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
-    page.wait_for_timeout(1_500)
-    _close_open_dropdown(page)
-    _screenshot(page, "17_edge_condition")
+        _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
+        page.wait_for_timeout(1_500)
+        _close_open_dropdown(page)
+        _screenshot(page, "17_edge_condition")
 
-    _select_sleeve_required(page, data.get("sleeve_required", ""))
-    page.wait_for_timeout(800)
-    _screenshot(page, "17a_sleeve_required")
+        _select_sleeve_required(page, data.get("sleeve_required", ""))
+        page.wait_for_timeout(800)
+        _screenshot(page, "17a_sleeve_required")
 
     # 13. S Plant — required for some HRC variants.
     # CRCA flow already maps/uses Supply Plant / Depot and forcing S Plant causes flaky overlay issues.
@@ -520,6 +530,38 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     log.info("All fields filled — ready to save")
 
     return _save(page, contract_number, baseline_line)
+
+
+def _fill_gl_specific_fields(page, data: dict) -> None:
+    """Fill GL-only required fields in visible top-to-bottom, left-to-right order."""
+    _select_lwc_combobox(page, "Oil Required", data.get("oil_req", ""))
+    page.wait_for_timeout(500)
+    _screenshot(page, "16d_oil_required")
+
+    _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
+    page.wait_for_timeout(500)
+    _screenshot(page, "16c_thick_tol_type")
+
+    _fill_gl_coating_min(page, data.get("al_zn_coating_min", ""))
+    page.wait_for_timeout(400)
+    _screenshot(page, "16g_al_zn_coating_min")
+
+    _scroll_contract_line_form(page, 650)
+    page.wait_for_timeout(400)
+    _screenshot(page, "16h_other_specification_scroll")
+
+    _select_sleeve_required(page, data.get("sleeve_required", ""))
+    page.wait_for_timeout(500)
+    _screenshot(page, "17a_sleeve_required")
+
+    _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
+    page.wait_for_timeout(500)
+    _close_open_dropdown(page)
+    _screenshot(page, "17_edge_condition")
+
+    _select_lwc_combobox(page, "Spangle Type", data.get("spangle_type", ""))
+    page.wait_for_timeout(500)
+    _screenshot(page, "16e_spangle_type")
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +673,11 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
     if _select_combobox_near_label(page, label, value):
         log.info("  selected via label-scoped combobox")
         return
+
+    if label in {"Oil Required", "Edge Condition", "Spangle Type"}:
+        if _select_exact_field_picklist(page, label, value):
+            log.info("  selected via exact field container")
+            return
 
     if _select_combobox_by_coordinates(page, label, value):
         log.info("  selected via coordinate-scoped combobox")
@@ -819,6 +866,21 @@ def _click_visible_picklist_value(page, value: str) -> None:
     page.get_by_role("option", name=value, exact=True).click(timeout=5_000)
 
 
+def _select_exact_field_picklist(page, label: str, value: str) -> bool:
+    """Open the combobox in the exact visible field container and verify it changed."""
+    if not value:
+        return False
+    if not _open_combobox_in_field_container(page, label):
+        return False
+    page.wait_for_timeout(500)
+    try:
+        _click_visible_picklist_value(page, value)
+        page.wait_for_timeout(600)
+        return _field_contains_value(page, label, value)
+    except Exception:
+        return False
+
+
 def _select_combobox_near_label(page, label: str, value: str) -> bool:
     """Open the combobox that belongs to an exact label, then select its value."""
     try:
@@ -914,7 +976,7 @@ def _select_combobox_by_coordinates(page, label: str, value: str) -> bool:
                     has_text=re.compile(r'^\s*' + re.escape(value) + r'\s*$', re.IGNORECASE)
                 ).first.click(timeout=4_000)
                 page.wait_for_timeout(600)
-                return True
+                return _field_contains_value(page, label, value)
             except Exception:
                 pass
         try:
@@ -922,7 +984,7 @@ def _select_combobox_by_coordinates(page, label: str, value: str) -> bool:
             page.wait_for_timeout(200)
             page.keyboard.press("Enter")
             page.wait_for_timeout(600)
-            return True
+            return _field_contains_value(page, label, value)
         except Exception:
             return False
     except Exception:
@@ -1248,6 +1310,7 @@ def _open_dropdown_near_label(page, label: str) -> bool:
 
 def _select_sleeve_required(page, value: str) -> None:
     """Select GL Sleeve Required from the actual labeled field, avoiding nearby HR_CONSP."""
+    value = _normalise_yes_no_picklist(value)
     if not value:
         return
     log.info("Selecting Sleeve Required? = '%s'", value)
@@ -1256,25 +1319,224 @@ def _select_sleeve_required(page, value: str) -> None:
         page.wait_for_timeout(500)
     except Exception:
         pass
+    if _select_sleeve_required_direct(page, value):
+        log.info("  Sleeve Required selected via direct field trigger")
+        return
     for label in ("Sleeve Required?", "Sleeve Required"):
-        if _open_combobox_in_field_container(page, label):
-            page.wait_for_timeout(500)
-            _click_visible_picklist_value(page, value)
-            page.wait_for_timeout(500)
+        if _select_exact_field_picklist(page, label, value):
             log.info("  Sleeve Required selected via exact field container")
             return
     try:
         # Fixed local/headless viewport fallback for the visible Sleeve Required field
         # in the GL Other Specification section.
-        page.mouse.click(925, 440)
+        box = page.locator("text=Sleeve Required").last.bounding_box(timeout=2_000)
+        if box:
+            page.mouse.click(box["x"] + 600, box["y"] + box["height"] + 18)
+        else:
+            page.mouse.click(925, 600)
         page.wait_for_timeout(500)
         _click_visible_picklist_value(page, value)
         page.wait_for_timeout(500)
-        log.info("  Sleeve Required selected via GL fixed-position fallback")
-        return
+        if _field_contains_value(page, "Sleeve Required", value):
+            log.info("  Sleeve Required selected via GL fixed-position fallback")
+            return
     except Exception:
         pass
     log.warning("  could not select Sleeve Required? = '%s'", value)
+
+
+def _select_sleeve_required_direct(page, value: str) -> bool:
+    """Open only the left-column Sleeve Required field and select Yes/No."""
+    try:
+        point = page.evaluate(
+            """() => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
+                    .filter((el) => visible(el) && compact(el.textContent).startsWith('sleeverequired'));
+                for (const label of labels) {
+                    const root = label.closest('.slds-form-element');
+                    if (!root || !visible(root)) continue;
+                    root.scrollIntoView({ block: 'center', inline: 'nearest' });
+                    const rootBox = root.getBoundingClientRect();
+                    const labelBox = label.getBoundingClientRect();
+                    const triggers = Array.from(root.querySelectorAll(
+                        'button[role="combobox"], button[aria-haspopup="listbox"], .slds-combobox__input, input[role="combobox"]'
+                    )).filter(visible);
+                    if (triggers.length) {
+                        const trigger = triggers[triggers.length - 1];
+                        const box = trigger.getBoundingClientRect();
+                        return { x: box.right - 12, y: box.top + box.height / 2 };
+                    }
+                    return { x: rootBox.right - 16, y: labelBox.bottom + 24 };
+                }
+                return null;
+            }"""
+        )
+        if not point:
+            return False
+        page.mouse.click(point["x"], point["y"])
+        page.wait_for_timeout(500)
+        for selector in ("[role='option']:visible", "lightning-base-combobox-item:visible", ".slds-listbox__item:visible"):
+            try:
+                page.locator(selector).filter(
+                    has_text=re.compile(r"^\s*" + re.escape(value) + r"\s*$", re.IGNORECASE)
+                ).last.click(timeout=3_000)
+                page.wait_for_timeout(600)
+                return True
+            except Exception:
+                pass
+        return False
+    except Exception:
+        return False
+
+
+def _select_sleeve_required_by_role(page, value: str) -> bool:
+    try:
+        combo = page.get_by_role(
+            "combobox",
+            name=re.compile(r"Sleeve\s+Required\\??", re.IGNORECASE),
+        ).first
+        combo.scroll_into_view_if_needed(timeout=3_000)
+        combo.click(timeout=5_000)
+        page.wait_for_timeout(500)
+        try:
+            page.get_by_role("option", name=value, exact=True).click(timeout=5_000)
+        except Exception:
+            _click_visible_picklist_value(page, value)
+        page.wait_for_timeout(700)
+        return (
+            _field_contains_value(page, "Sleeve Required", value)
+            or _field_contains_value(page, "Sleeve Required?", value)
+            or _sleeve_required_contains_value(page, value)
+        )
+    except Exception:
+        return False
+
+
+def _select_sleeve_required_exact_container(page, value: str) -> bool:
+    try:
+        opened = page.evaluate(
+            """() => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
+                    .filter((el) => visible(el) && compact(el.textContent).startsWith('sleeverequired'))
+                    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+                const label = labels[labels.length - 1];
+                if (!label) return false;
+                label.scrollIntoView({ block: 'center', inline: 'nearest' });
+                const root = label.closest('.slds-form-element');
+                if (!root) return false;
+                const triggers = Array.from(root.querySelectorAll(
+                    'button[role="combobox"], button[aria-haspopup="listbox"], .slds-combobox__input, input[role="combobox"]'
+                )).filter(visible);
+                const trigger = triggers[triggers.length - 1];
+                if (!trigger) return false;
+                trigger.click();
+                return true;
+            }"""
+        )
+        if not opened:
+            return False
+        page.wait_for_timeout(500)
+        _click_visible_picklist_value(page, value)
+        page.wait_for_timeout(600)
+        return _sleeve_required_contains_value(page, value)
+    except Exception:
+        return False
+
+
+def _sleeve_required_contains_value(page, expected: str) -> bool:
+    try:
+        text = page.evaluate(
+            """() => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
+                    .filter((el) => visible(el) && compact(el.textContent).startsWith('sleeverequired'));
+                for (const label of labels) {
+                    const root = label.closest('.slds-form-element') || label.parentElement;
+                    if (!root) continue;
+                    const controls = Array.from(root.querySelectorAll(
+                        'button[role="combobox"], input, .slds-combobox__input, .slds-truncate'
+                    )).filter(visible);
+                    const control = controls[controls.length - 1];
+                    if (!control) continue;
+                    const value = norm(control.value || control.textContent || control.getAttribute('title') || control.getAttribute('aria-label'));
+                    if (value) return value;
+                }
+                return '';
+            }"""
+        )
+        return str(expected or "").strip().lower() in str(text or "").strip().lower()
+    except Exception:
+        return False
+
+
+def _select_picklist_by_label_click_point(page, label: str, value: str) -> bool:
+    """Click the dropdown arrow for a field located directly below its label."""
+    try:
+        point = page.evaluate(
+            """(labelText) => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const target = compact(labelText);
+                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
+                    .filter((el) => visible(el) && compact(el.textContent) === target)
+                    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+                const label = labels[labels.length - 1];
+                if (!label) return null;
+                label.scrollIntoView({ block: 'center', inline: 'nearest' });
+                const labelBox = label.getBoundingClientRect();
+                const root = label.closest('.slds-form-element') || label.parentElement;
+                const rootBox = root ? root.getBoundingClientRect() : labelBox;
+                const width = Math.max(rootBox.width, 300);
+                return {
+                    x: Math.min(rootBox.right - 14, labelBox.left + width - 14),
+                    y: labelBox.bottom + 21,
+                };
+            }""",
+            label,
+        )
+        if not point:
+            return False
+        page.mouse.click(point["x"], point["y"])
+        page.wait_for_timeout(600)
+        _click_visible_picklist_value(page, value)
+        page.wait_for_timeout(600)
+        return _field_contains_value(page, label, value) or _sleeve_required_contains_value(page, value)
+    except Exception:
+        return False
+
+
+def _normalise_yes_no_picklist(value: str) -> str:
+    text = str(value or "").strip()
+    if text.upper() == "Y":
+        return "Yes"
+    if text.upper() == "N":
+        return "No"
+    return text
 
 
 def _close_open_dropdown(page) -> None:
@@ -1299,27 +1561,40 @@ def _open_combobox_in_field_container(page, label: str) -> bool:
             """(labelText) => {
                 const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
                 const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
                 const target = compact(labelText);
-                const candidates = Array.from(document.querySelectorAll('label, span, div'))
+                const candidates = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
                     .filter((el) => {
                         const text = compact(el.textContent);
-                        return text === target || (text.includes(target) && text.length <= target.length + 6);
+                        return visible(el) && (text === target || (text.includes(target) && text.length <= target.length + 6));
                     })
                     .sort((a, b) => compact(a.textContent).length - compact(b.textContent).length);
                 for (const labelEl of candidates) {
                     labelEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+                    const labelBox = labelEl.getBoundingClientRect();
                     let root = labelEl.closest('.slds-form-element');
                     if (!root) root = labelEl.closest('lightning-layout-item, div');
                     for (let i = 0; i < 5 && root; i++, root = root.parentElement) {
                         const triggers = Array.from(root.querySelectorAll(
                             'button[role="combobox"], button[aria-haspopup="listbox"], button[aria-label], .slds-combobox__input, input[role="combobox"]'
-                        )).filter((el) => {
+                        )).filter(visible).map((el) => {
                             const box = el.getBoundingClientRect();
-                            const style = window.getComputedStyle(el);
-                            return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-                        });
+                            const centerY = box.top + (box.height / 2);
+                            const expectedY = labelBox.bottom + 18;
+                            const belowLabel = centerY >= labelBox.top - 4 && centerY <= labelBox.bottom + 90;
+                            const horizontalNear = box.right >= labelBox.left - 20 && box.left <= labelBox.left + 900;
+                            const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+                            const score = Math.abs(centerY - expectedY) + Math.abs(box.left - labelBox.left) * 0.05;
+                            return { el, score, belowLabel, horizontalNear, disabled };
+                        }).filter((item) => item.belowLabel && item.horizontalNear && !item.disabled)
+                          .sort((a, b) => a.score - b.score)
+                          .map((item) => item.el);
                         if (triggers.length) {
-                            triggers[triggers.length - 1].click();
+                            triggers[0].click();
                             return true;
                         }
                     }
@@ -1336,15 +1611,25 @@ def _field_contains_value(page, label: str, expected: str) -> bool:
     try:
         text = page.evaluate(
             """(labelText) => {
-                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-                const labels = Array.from(document.querySelectorAll('label, span'))
-                    .filter((el) => norm(el.textContent).toLowerCase() === labelText.toLowerCase());
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const target = compact(labelText);
+                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
+                    .filter((el) => visible(el) && compact(el.textContent) === target);
                 for (const labelEl of labels) {
                     const root = labelEl.closest('.slds-form-element, lightning-layout-item, div') || labelEl.parentElement;
                     if (!root) continue;
-                    const valueEl = root.querySelector('input, button, .slds-combobox__input, .slds-truncate');
+                    const values = Array.from(root.querySelectorAll(
+                        'input, button[role="combobox"], .slds-combobox__input, .slds-truncate'
+                    )).filter(visible);
+                    const valueEl = values[values.length - 1];
                     if (!valueEl) continue;
-                    const value = norm(valueEl.value || valueEl.textContent || valueEl.getAttribute('title'));
+                    const value = norm(valueEl.value || valueEl.textContent || valueEl.getAttribute('title') || valueEl.getAttribute('aria-label'));
                     if (value) return value;
                 }
                 return '';
@@ -1702,6 +1987,14 @@ def _plant_keyword(plant_raw: str) -> str:
     parts = re.split(r'\s*-\s*', str(plant_raw or ""), maxsplit=1)
     plant_name = parts[1].strip() if len(parts) > 1 else str(plant_raw or "").strip()
     return plant_name.split()[0] if plant_name else ""
+
+
+def _normalise_plant_name(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    code = text.split()[0].rstrip("-")
+    return PLANT_NAME_BY_CODE.get(code, text)
 
 
 def _select_s_plant(page, plant_code: str, plant_raw: str = "") -> None:

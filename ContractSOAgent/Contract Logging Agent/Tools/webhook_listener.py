@@ -71,7 +71,7 @@ MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
 GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
 
-SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI", "GL"}
+SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI", "GL", "PPGI"}
 
 SALESFORCE_PRODUCT_BY_MATERIAL = {
     "HRC": {
@@ -90,6 +90,10 @@ SALESFORCE_PRODUCT_BY_MATERIAL = {
     },
     "GL": {
         "S_GLCF": "Galvalume Coil - (S_GLCF)",
+    },
+    "PPGI": {
+        "S_PPGICF": "PPGI Coil - (S_PPGICF)",
+        "S_PPGISF": "PPGI Sheet - (S_PPGISF)",
     },
 }
 
@@ -739,7 +743,10 @@ def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) ->
         "oil_req": details.get("oil_req", ""),
         "s_brand": details.get("s_brand", ""),
         "spangle_type": details.get("spangle_type", ""),
-        "zinc_coating_min": details.get("zinc_coating_min", ""),
+        "zinc_coating_min": details.get("zinc_coating_min", "") or details.get("zin_coating_min", ""),
+        "tolerance_type": details.get("tolerance_type", ""),
+        "guard_film_required": details.get("guard_film_required", ""),
+        "top_color_code": details.get("top_color_code", ""),
         "al_zn_coating_min": details.get("al_zn_coating_min", ""),
         "sleeve_required": details.get("sleeve_required", ""),
         "plant_code": plant_code,
@@ -1039,6 +1046,10 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
             "s_brand": _row_value(row, "BRAND", "S Brand", "s_brand"),
             "spangle_type": _row_value(row, "S_SPANGLE_TYPE", "Spangle Type", "spangle_type"),
             "zinc_coating_min": _row_value(row, "ZINC COATING", "ZINC_COAT", "Zin_Coating Min(GSM)", "zinc_coating_min"),
+            "zin_coating_min": _row_value(row, "ZINC COATING", "ZINC_COAT", "Zin_Coating Min(GSM)", "zin_coating_min"),
+            "tolerance_type": _row_value(row, "TOL-TYPE", "TOL TYPE", "Tolerance Type", "tolerance_type"),
+            "guard_film_required": _row_value(row, "GUARD FILM", "Guard Film Required", "guard_film_required"),
+            "top_color_code": _row_value(row, "TOP COLOUR", "TOP COLOR", "Top Color Code", "top_color_code"),
             "al_zn_coating_min": _row_value(row, "AL ZN COATING MIN", "AL_ZN_COATING_MIN", "AL ZN Coating GSM MIN", "al_zn_coating_min"),
             "sleeve_required": _row_value(row, "SO_SLEEVE_REQD", "Sleeve Required?", "Sleeve Required", "sleeve_required"),
         }

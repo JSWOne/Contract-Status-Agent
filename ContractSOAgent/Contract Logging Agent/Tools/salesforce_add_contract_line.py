@@ -550,16 +550,15 @@ def _fill_gl_specific_fields(page, data: dict) -> None:
     page.wait_for_timeout(400)
     _screenshot(page, "16h_other_specification_scroll")
 
-    _select_sleeve_required(page, data.get("sleeve_required", ""))
+    _select_gl_recorded_picklist(page, "Sleeve Required?", _normalise_yes_no_picklist(data.get("sleeve_required", "")))
     page.wait_for_timeout(500)
     _screenshot(page, "17a_sleeve_required")
 
-    _select_lwc_combobox(page, "Edge Condition", data.get("edge_con", ""))
+    _select_gl_recorded_picklist(page, "Edge Condition", data.get("edge_con", ""))
     page.wait_for_timeout(500)
-    _close_open_dropdown(page)
     _screenshot(page, "17_edge_condition")
 
-    _select_lwc_combobox(page, "Spangle Type", data.get("spangle_type", ""))
+    _select_gl_recorded_picklist(page, "Spangle Type", data.get("spangle_type", ""))
     page.wait_for_timeout(500)
     _screenshot(page, "16e_spangle_type")
 
@@ -811,6 +810,55 @@ def _select_gi_recorded_picklist(page, label: str, value: str) -> bool:
     except Exception as exc:
         log.debug("  recorded GI picklist fallback missed for '%s' = '%s': %s", label, value, exc)
         return False
+
+
+def _select_gl_recorded_picklist(page, label: str, value: str) -> bool:
+    """Select GL picklists using the exact Playwright Inspector recording."""
+    if not value:
+        return False
+    try:
+        if label == "Sleeve Required?":
+            combo = page.get_by_role("combobox", name="Sleeve Required?").first
+            combo.scroll_into_view_if_needed(timeout=3_000)
+            combo.click(timeout=5_000)
+            page.wait_for_timeout(250)
+            combo.click(timeout=5_000)
+            page.wait_for_timeout(300)
+            _click_gl_recorded_option(page, value, exact=True)
+        elif label == "Edge Condition":
+            combo = page.get_by_role("combobox", name="Edge Condition").first
+            combo.scroll_into_view_if_needed(timeout=3_000)
+            combo.click(timeout=5_000)
+            page.wait_for_timeout(300)
+            _click_gl_recorded_option(page, value)
+        elif label == "Spangle Type":
+            combo = page.get_by_role("combobox", name="Spangle Type").first
+            combo.scroll_into_view_if_needed(timeout=3_000)
+            combo.click(timeout=5_000)
+            page.wait_for_timeout(250)
+            combo.click(timeout=5_000)
+            page.wait_for_timeout(300)
+            _click_gl_recorded_option(page, value)
+        else:
+            return False
+        page.wait_for_timeout(700)
+        if not _field_contains_value(page, label, value):
+            log.debug("  selected %s via recorded GL flow; value check did not read it back", label)
+        log.info("  selected via recorded GL picklist flow")
+        return True
+    except Exception as exc:
+        log.warning("  recorded GL picklist failed for '%s' = '%s': %s", label, value, exc)
+        return False
+
+
+def _click_gl_recorded_option(page, value: str, exact: bool = False) -> None:
+    """Click a visible GL dropdown option, with a span fallback for Salesforce menus."""
+    try:
+        page.get_by_role("option", name=value, exact=exact).click(timeout=5_000)
+        return
+    except Exception:
+        pass
+    _click_visible_picklist_value(page, value)
 
 
 def _select_combobox_role_value(page, label: str, value: str) -> bool:
@@ -1348,27 +1396,58 @@ def _select_sleeve_required(page, value: str) -> None:
 def _select_sleeve_required_direct(page, value: str) -> bool:
     """Open only the left-column Sleeve Required field and select Yes/No."""
     try:
-        label_pattern = re.compile(r"Sleeve\s+Required\??", re.IGNORECASE)
-        label_locators = [
-            page.locator("label").filter(has_text=label_pattern).last,
-            page.locator(".slds-form-element__label").filter(has_text=label_pattern).last,
-            page.get_by_text(label_pattern).last,
-        ]
-        for label in label_locators:
-            try:
-                label.scroll_into_view_if_needed(timeout=2_000)
-                box = label.bounding_box(timeout=2_000)
-                if not box:
-                    continue
-                point = {"x": box["x"] + 590, "y": box["y"] + box["height"] + 22}
-                log.info("  clicking Sleeve Required near visible label at %.0f, %.0f", point["x"], point["y"])
-                page.mouse.click(point["x"], point["y"])
-                page.wait_for_timeout(600)
-                _click_visible_picklist_value(page, value)
-                page.wait_for_timeout(600)
-                return True
-            except Exception:
-                pass
+        point = page.evaluate(
+            """() => {
+                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
+                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const visible = (el) => {
+                    const box = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const section = Array.from(document.querySelectorAll('span, div'))
+                    .filter((el) => visible(el) && compact(el.textContent) === 'otherspecification')
+                    .sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top)[0];
+                const sectionBottom = section ? section.getBoundingClientRect().bottom : 0;
+                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label'))
+                    .filter((el) => {
+                        if (!visible(el)) return false;
+                        const box = el.getBoundingClientRect();
+                        const text = compact(el.textContent);
+                        return (text === 'sleeverequired' || text === 'sleeverequired?') && box.top > sectionBottom;
+                    })
+                    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+                const label = labels[0];
+                if (!label) return null;
+                label.scrollIntoView({ block: 'center', inline: 'nearest' });
+                const labelBox = label.getBoundingClientRect();
+                const controls = Array.from(document.querySelectorAll(
+                    'button[role="combobox"], button[aria-haspopup="listbox"], .slds-combobox__input, input[role="combobox"], select'
+                )).filter(visible).map((el) => {
+                    const box = el.getBoundingClientRect();
+                    const centerY = box.top + box.height / 2;
+                    const centerX = box.left + box.width / 2;
+                    const below = centerY > labelBox.bottom && centerY < labelBox.bottom + 60;
+                    const sameColumn = centerX > labelBox.left - 20 && centerX < labelBox.left + 760;
+                    const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+                    const score = Math.abs(centerY - (labelBox.bottom + 24)) + Math.abs(box.left - labelBox.left) * 0.02;
+                    return { el, box, below, sameColumn, disabled, score };
+                }).filter((item) => item.below && item.sameColumn && !item.disabled)
+                  .sort((a, b) => a.score - b.score);
+                const control = controls[0];
+                if (!control) return { x: labelBox.left + 590, y: labelBox.bottom + 22 };
+                return { x: control.box.right - 12, y: control.box.top + control.box.height / 2 };
+            }"""
+        )
+        if not point:
+            return False
+        log.info("  clicking Sleeve Required control at %.0f, %.0f", point["x"], point["y"])
+        page.mouse.click(point["x"], point["y"])
+        page.wait_for_timeout(600)
+        _click_visible_picklist_value(page, value)
+        page.wait_for_timeout(600)
+        if _sleeve_required_contains_value(page, value) or _field_contains_value(page, "Sleeve Required?", value):
+            return True
         return False
     except Exception:
         return False

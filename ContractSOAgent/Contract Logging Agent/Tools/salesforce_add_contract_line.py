@@ -1348,45 +1348,23 @@ def _select_sleeve_required(page, value: str) -> None:
 def _select_sleeve_required_direct(page, value: str) -> bool:
     """Open only the left-column Sleeve Required field and select Yes/No."""
     try:
-        point = page.evaluate(
-            """() => {
-                const norm = (s) => (s || '').replace(/^\\*\\s*/, '').replace(/\\s+/g, ' ').trim();
-                const compact = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-                const visible = (el) => {
-                    const box = el.getBoundingClientRect();
-                    const style = window.getComputedStyle(el);
-                    return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-                };
-                const labels = Array.from(document.querySelectorAll('label, .slds-form-element__label, span'))
-                    .filter((el) => visible(el) && compact(el.textContent).startsWith('sleeverequired'));
-                for (const label of labels) {
-                    const root = label.closest('.slds-form-element');
-                    if (!root || !visible(root)) continue;
-                    root.scrollIntoView({ block: 'center', inline: 'nearest' });
-                    const rootBox = root.getBoundingClientRect();
-                    const labelBox = label.getBoundingClientRect();
-                    const triggers = Array.from(root.querySelectorAll(
-                        'button[role="combobox"], button[aria-haspopup="listbox"], .slds-combobox__input, input[role="combobox"]'
-                    )).filter(visible);
-                    if (triggers.length) {
-                        const trigger = triggers[triggers.length - 1];
-                        const box = trigger.getBoundingClientRect();
-                        return { x: box.right - 12, y: box.top + box.height / 2 };
-                    }
-                    return { x: rootBox.right - 16, y: labelBox.bottom + 24 };
-                }
-                return null;
-            }"""
-        )
-        if not point:
-            return False
-        page.mouse.click(point["x"], point["y"])
-        page.wait_for_timeout(500)
-        for selector in ("[role='option']:visible", "lightning-base-combobox-item:visible", ".slds-listbox__item:visible"):
+        label_pattern = re.compile(r"Sleeve\s+Required\??", re.IGNORECASE)
+        label_locators = [
+            page.locator("label").filter(has_text=label_pattern).last,
+            page.locator(".slds-form-element__label").filter(has_text=label_pattern).last,
+            page.get_by_text(label_pattern).last,
+        ]
+        for label in label_locators:
             try:
-                page.locator(selector).filter(
-                    has_text=re.compile(r"^\s*" + re.escape(value) + r"\s*$", re.IGNORECASE)
-                ).last.click(timeout=3_000)
+                label.scroll_into_view_if_needed(timeout=2_000)
+                box = label.bounding_box(timeout=2_000)
+                if not box:
+                    continue
+                point = {"x": box["x"] + 590, "y": box["y"] + box["height"] + 22}
+                log.info("  clicking Sleeve Required near visible label at %.0f, %.0f", point["x"], point["y"])
+                page.mouse.click(point["x"], point["y"])
+                page.wait_for_timeout(600)
+                _click_visible_picklist_value(page, value)
                 page.wait_for_timeout(600)
                 return True
             except Exception:

@@ -45,6 +45,10 @@ SKU_PRODUCT_BY_MATERIAL = {
         "S_PPGICF": "PPGI Coil - (S_PPGICF)",
         "S_PPGISF": "PPGI Sheet - (S_PPGISF)",
     },
+    "PPGL": {
+        "S_PPGLCF": "PPGL Coil - (S_PPGLCF)",
+        "S_PPGLSF": "PPGL Sheet - (S_PPGLSF)",
+    },
 }
 
 SKU_DETAIL_FIELDS = {
@@ -186,7 +190,6 @@ SKU_DETAIL_FIELDS = {
             ("eq_specifi", "Eq. Specification"),
             ("eq_sub_grade", "Eq. Sub Specification"),
             ("end_appn", "End Application"),
-            ("plant_code", "Supply Plant / Depot"),
             ("cust_req_date", "Customer Requested Date"),
             ("s_brand", "S Brand"),
             ("width", "Width"),
@@ -203,7 +206,6 @@ SKU_DETAIL_FIELDS = {
             ("eq_specifi", "Eq. Specification"),
             ("eq_sub_grade", "Eq. Sub Specification"),
             ("end_appn", "End Application"),
-            ("plant_code", "Supply Plant / Depot"),
             ("cust_req_date", "Customer Requested Date"),
             ("s_brand", "S Brand"),
             ("width", "Width"),
@@ -212,6 +214,43 @@ SKU_DETAIL_FIELDS = {
             ("thick_tol_type", "Thickness Tolerance Type"),
             ("tolerance_type", "Tolerance Type"),
             ("zin_coating_min", "Zin_Coating Min(GSM)"),
+            ("guard_film_required", "Guard Film Required"),
+            ("top_color_code", "Top Color Code"),
+        ],
+    },
+    "PPGL": {
+        "default": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("s_brand", "S Brand"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("guard_film_required", "Guard Film Required"),
+            ("width_tol_type", "S WIDTH TOL TYPE"),
+            ("tolerance_type", "Tolerance Type"),
+            ("top_color_code", "Top Color Code"),
+            ("sleeve_required", "Sleeve Required?"),
+            ("al_zn_coating_min", "AL ZN Coating GSM MIN"),
+        ],
+        "S_PPGLSF": [
+            ("customer_order_category", "Customer Order Category"),
+            ("eq_specif_grp", "Eq. Specification Group"),
+            ("eq_specifi", "Eq. Specification"),
+            ("eq_sub_grade", "Eq. Sub Specification"),
+            ("end_appn", "End Application"),
+            ("cust_req_date", "Customer Requested Date"),
+            ("s_brand", "S Brand"),
+            ("width", "Width"),
+            ("thickness", "Thickness"),
+            ("length", "Length"),
+            ("thick_tol_type", "Thickness Tolerance Type"),
+            ("al_zn_coating_min", "AL ZN Coating GSM MIN"),
+            ("tolerance_type", "Tolerance Type"),
             ("guard_film_required", "Guard Film Required"),
             ("top_color_code", "Top Color Code"),
         ],
@@ -392,6 +431,9 @@ def build_contract_created_card(ticket_id: str, contract_number: str) -> dict:
 
 
 def build_contract_creation_failed_card(ticket_id: str, error_message: str) -> dict:
+    error_text = re.sub(r"\s+", " ", str(error_message or "")).strip()
+    if len(error_text) > 500:
+        error_text = error_text[:497] + "..."
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
@@ -409,7 +451,7 @@ def build_contract_creation_failed_card(ticket_id: str, error_message: str) -> d
                 "type": "FactSet",
                 "facts": [
                     {"title": "Jira Ticket", "value": ticket_id or "-"},
-                    {"title": "Status", "value": "Failed. Detailed error is available in Cloud Run logs."},
+                    {"title": "Status", "value": error_text or "Failed. Detailed error is available in Cloud Run logs."},
                 ],
             },
         ],

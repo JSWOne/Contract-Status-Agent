@@ -20,6 +20,7 @@ from flask import Flask, jsonify, request
 
 from build_contract_card import (
     build_audit_card,
+    build_contract_creation_started_card,
     build_contract_creation_failed_card,
     build_contract_validation_failed_card,
     build_contract_created_card,
@@ -60,6 +61,8 @@ logging.basicConfig(
 logging.getLogger().setLevel(LOG_LEVEL)
 app.logger.setLevel(LOG_LEVEL)
 logging.getLogger("salesforce_add_contract_line").setLevel(LOG_LEVEL)
+logging.getLogger("salesforce_add_ppgi_line").setLevel(LOG_LEVEL)
+logging.getLogger("salesforce_add_ppgl_line").setLevel(LOG_LEVEL)
 
 TICKET_PATTERN = re.compile(r"\b(O360-\d+)\b", re.IGNORECASE)
 CONTRACT_PATTERN = re.compile(r"\b(\d{7,9})\b")
@@ -71,7 +74,7 @@ MEMORY_PATH = BASE_DIR / "Memory" / "memory.json"
 GCS_BUCKET = os.environ.get("GCS_MEMORY_BUCKET", "").strip()
 GCS_MEMORY_BLOB = "contract-logging-agent/memory.json"
 
-SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI", "GL", "PPGI"}
+SUPPORTED_SKU_DIVISIONS = {"HRC", "CRCA", "GI", "GL", "PPGI", "PPGL"}
 
 SALESFORCE_PRODUCT_BY_MATERIAL = {
     "HRC": {
@@ -94,6 +97,10 @@ SALESFORCE_PRODUCT_BY_MATERIAL = {
     "PPGI": {
         "S_PPGICF": "PPGI Coil - (S_PPGICF)",
         "S_PPGISF": "PPGI Sheet - (S_PPGISF)",
+    },
+    "PPGL": {
+        "S_PPGLCF": "PPGL Coil - (S_PPGLCF)",
+        "S_PPGLSF": "PPGL Sheet - (S_PPGLSF)",
     },
 }
 
@@ -264,6 +271,7 @@ def contract_confirm():
         return jsonify({"status": "validation_error", "ticket_id": ticket_id, "missing_fields": missing_fields}), 400
 
     post_card(build_audit_card(data))
+    post_card(build_contract_creation_started_card(ticket_id))
     safe_write_memory_step("contract_confirm", "success", f"Confirmed details for {ticket_id}", data)
     result = create_contract_after_confirm(ticket_id, data)
     if result.get("status") == "success":
@@ -553,7 +561,15 @@ def _matching_master_row(rows: list[dict], material: str, description: str) -> d
 
 def _is_hrc_details_payload(data: dict) -> bool:
     stage = (data.get("stage") or "").strip().lower()
-    if stage in {"hrc_sku_details", "crca_sku_details", "gi_sku_details", "gl_sku_details", "sku_details"}:
+    if stage in {
+        "hrc_sku_details",
+        "crca_sku_details",
+        "gi_sku_details",
+        "gl_sku_details",
+        "ppgi_sku_details",
+        "ppgl_sku_details",
+        "sku_details",
+    }:
         return True
     detail_keys = {
         "customer_order_category",
@@ -572,8 +588,13 @@ def _is_hrc_details_payload(data: dict) -> bool:
         "s_brand",
         "spangle_type",
         "zinc_coating_min",
+        "zin_coating_min",
         "al_zn_coating_min",
         "sleeve_required",
+        "tolerance_type",
+        "guard_film_required",
+        "top_color_code",
+        "width_tol_type",
     }
     return any(str(data.get(key) or "").strip() for key in detail_keys)
 
@@ -612,7 +633,7 @@ def _post_sku_confirmation_card(contract_number: str) -> dict:
 
         division = (context.get("division") or "").strip().upper()
         if division not in SUPPORTED_SKU_DIVISIONS:
-            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC, CRCA, GI, and GL SKU confirmation are enabled for now", contract_number))
+            post_sku_card(build_hrc_sku_validation_failed_card("Only HRC, CRCA, GI, GL, PPGI, and PPGL SKU confirmation are enabled for now", contract_number))
             return {"status": "unsupported_division", "detail": f"division={division or '<blank>'}"}
 
         if not context.get("sold_to_party") or not context.get("ship_to_party"):
@@ -660,10 +681,22 @@ def _run_sku_creation(
     request_id: str = "",
 ) -> None:
     try:
-        from salesforce_add_contract_line import salesforce_add_contract_line
+        division = str(line_data.get("division") or (details or {}).get("division") or "").strip().upper()
+        if division == "PPGI":
+            from salesforce_add_ppgi_line import add_ppgi_contract_line
 
-        app.logger.info("[sku] Starting line item creation for contract %s", contract_number)
-        line_name = salesforce_add_contract_line(contract_number, line_data)
+            app.logger.info("[sku] Starting PPGI line item creation for contract %s", contract_number)
+            line_name = add_ppgi_contract_line(contract_number, line_data)
+        elif division == "PPGL":
+            from salesforce_add_ppgl_line import add_ppgl_contract_line
+
+            app.logger.info("[sku] Starting PPGL line item creation for contract %s", contract_number)
+            line_name = add_ppgl_contract_line(contract_number, line_data)
+        else:
+            from salesforce_add_contract_line import salesforce_add_contract_line
+
+            app.logger.info("[sku] Starting line item creation for contract %s", contract_number)
+            line_name = salesforce_add_contract_line(contract_number, line_data)
         if not line_name:
             raise RuntimeError("Contract line name was not captured after Save")
         app.logger.info("[sku] Line created: %s", line_name)
@@ -722,7 +755,10 @@ def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) ->
     division = (details.get("division") or context.get("division") or "").strip().upper() or _division_from_material(material)
     plant_code = details.get("plant_code") or context.get("ship_plant_code", "")
     plant_code = _normalise_plant_for_salesforce(plant_code)
-    customer_requested_date = _customer_requested_date_from_context(context) or details.get("cust_req_date", "")
+    if division in {"PPGI", "PPGL"}:
+        customer_requested_date = _ppgi_ppgl_customer_requested_date(context)
+    else:
+        customer_requested_date = _customer_requested_date_from_context(context) or details.get("cust_req_date", "")
 
     line_data = {
         "division": division,
@@ -749,6 +785,7 @@ def _sku_details_to_salesforce_line_data(contract_number: str, details: dict) ->
         "top_color_code": details.get("top_color_code", ""),
         "al_zn_coating_min": details.get("al_zn_coating_min", ""),
         "sleeve_required": details.get("sleeve_required", ""),
+        "width_tol_type": details.get("width_tol_type", ""),
         "plant_code": plant_code,
     }
     return line_data
@@ -793,6 +830,15 @@ def _normalise_customer_requested_date(value: str, contract_end_date: str = "") 
     if requested:
         return requested.strftime("%d/%m/%Y")
     return str(value or "").strip()
+
+
+def _ppgi_ppgl_customer_requested_date(context: dict | None = None) -> str:
+    context = context or {}
+    requested = datetime.now(timezone.utc).date() + timedelta(days=90)
+    return _normalise_customer_requested_date(
+        requested.strftime("%d/%m/%Y"),
+        context.get("contract_end_date", ""),
+    )
 
 
 def _parse_date(value: str) -> datetime | None:
@@ -999,6 +1045,11 @@ def _customer_requested_date_from_context(context: dict | None) -> str:
 
 def _manual_hrc_details(selection: dict, context: dict | None = None) -> dict:
     division = ((context or {}).get("division") or selection.get("division") or "").strip().upper()
+    requested_date = (
+        _ppgi_ppgl_customer_requested_date(context)
+        if division in {"PPGI", "PPGL"}
+        else _customer_requested_date_from_context(context)
+    )
     return {
         "customer_order_category": "",
         "eq_specif_grp": "",
@@ -1007,7 +1058,7 @@ def _manual_hrc_details(selection: dict, context: dict | None = None) -> dict:
         "end_appn": "",
         "rh_req": "N",
         "plant_code": (context or {}).get("ship_plant_code", ""),
-        "cust_req_date": _customer_requested_date_from_context(context),
+        "cust_req_date": requested_date,
         "width": "",
         "thickness": "",
         "length": "",
@@ -1023,7 +1074,12 @@ def _manual_hrc_details(selection: dict, context: dict | None = None) -> dict:
 
 def _details_from_row(row: dict, material: str, context: dict | None = None) -> dict:
     details = _manual_hrc_details({"material": material}, context)
-    context_customer_requested_date = _customer_requested_date_from_context(context)
+    division = ((context or {}).get("division") or details.get("division") or "").strip().upper()
+    context_customer_requested_date = (
+        _ppgi_ppgl_customer_requested_date(context)
+        if division in {"PPGI", "PPGL"}
+        else _customer_requested_date_from_context(context)
+    )
     details.update(
         {
             "customer_order_category": _row_value(row, "CUST ORDER", "customer_order_category", "Cust.Grp", "Cust Grp"),
@@ -1052,6 +1108,7 @@ def _details_from_row(row: dict, material: str, context: dict | None = None) -> 
             "top_color_code": _row_value(row, "TOP COLOUR", "TOP COLOR", "Top Color Code", "top_color_code"),
             "al_zn_coating_min": _row_value(row, "AL ZN COATING MIN", "AL_ZN_COATING_MIN", "AL ZN Coating GSM MIN", "al_zn_coating_min"),
             "sleeve_required": _row_value(row, "SO_SLEEVE_REQD", "Sleeve Required?", "Sleeve Required", "sleeve_required"),
+            "width_tol_type": _row_value(row, "WIDTH_TOL_TYPE", "S WIDTH TOL TYPE", "S Width Tol Type", "width_tol_type"),
         }
     )
     return details
@@ -1291,6 +1348,13 @@ def normalise_confirm_payload(payload: dict) -> dict:
             "s_brand",
             "spangle_type",
             "zinc_coating_min",
+            "zin_coating_min",
+            "tolerance_type",
+            "guard_film_required",
+            "top_color_code",
+            "al_zn_coating_min",
+            "sleeve_required",
+            "width_tol_type",
             "plant_code",
         ):
             value = candidate.get(key)

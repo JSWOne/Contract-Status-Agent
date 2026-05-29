@@ -127,10 +127,17 @@ def create_contract_in_portal(contract_data: dict, ticket_id: str = "") -> str:
             print(f"[contract-create] {ticket_id}: saving contract", flush=True)
             click_save_button(page, contract_data)
             log.info("Waiting for save for ticket %s", ticket_id)
-            wait_for_save(page, timeout_ms=600_000)
+            save_observed = wait_for_save(page, timeout_ms=600_000)
             contract_number = extract_contract_number(page)
             if not contract_number:
-                raise RuntimeError("Contract was saved but generated Contract Number was not captured")
+                diagnostics = collect_form_diagnostics(page, contract_data)
+                screenshot(page, "05_after_save_no_contract_number")
+                dump_html(page, "05_after_save_no_contract_number")
+                raise RuntimeError(
+                    "Contract save did not return generated Contract Number. "
+                    f"save_observed={save_observed}. Diagnostics: "
+                    + compact_json(diagnostics, max_len=1200)
+                )
             print(f"[contract-create] {ticket_id}: created contract {contract_number}", flush=True)
             return contract_number
         finally:
@@ -1311,11 +1318,18 @@ def fill_lookup_control(page, loc, label: str, value: str, component=None) -> bo
     page.keyboard.press("Delete")
     loc.fill(value)
     page.wait_for_timeout(3_000)
+    if component is not None:
+        if label == "Ship to Party" and click_first_lookup_option(component):
+            log.info("Selected first narrowed lookup option for %s", label)
+            return True
+        if click_lookup_option(component, value):
+            log.info("Selected scoped lookup %s", label)
+            return True
+        if click_first_lookup_option(component):
+            log.info("Selected first narrowed lookup option for %s", label)
+            return True
     if click_lookup_option(page, value):
-        log.info("Selected lookup %s", label)
-        return True
-    if component is not None and click_first_lookup_option(component):
-        log.info("Selected first narrowed lookup option for %s", label)
+        log.info("Selected page lookup %s", label)
         return True
     loc.press("ArrowDown")
     page.wait_for_timeout(300)
@@ -1570,7 +1584,7 @@ def xpath_literal(value: str) -> str:
     return "concat(" + ", \"'\", ".join(f"'{part}'" for part in value.split("'")) + ")"
 
 
-def wait_for_save(page, timeout_ms: int = 600_000) -> None:
+def wait_for_save(page, timeout_ms: int = 600_000) -> bool:
     try:
         page.wait_for_url(
             lambda url: (
@@ -1582,8 +1596,32 @@ def wait_for_save(page, timeout_ms: int = 600_000) -> None:
             timeout=timeout_ms,
         )
         page.wait_for_timeout(2_000)
+        return True
     except Exception as exc:
         log.warning("wait_for_save timed out or failed: %s", exc)
+    try:
+        page.wait_for_function(
+            """
+            () => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+                };
+                const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
+                    .filter(visible)
+                    .map((el) => (el.textContent || el.value || el.getAttribute('aria-label') || '').trim().toLowerCase());
+                return !buttons.some((text) => text === 'save');
+            }
+            """,
+            timeout=30_000,
+        )
+        page.wait_for_timeout(2_000)
+        log.info("Save button is no longer visible after save click; continuing to contract-number extraction")
+        return True
+    except Exception as exc:
+        log.warning("Save button still visible or save-completion fallback timed out: %s", exc)
+    return False
 
 
 def extract_contract_number(page) -> str:

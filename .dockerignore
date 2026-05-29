@@ -21,3 +21,22 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local scratch / browser-auth captures; never needed in Cloud Run images
+.claude/
+.playwright-mcp/
+acquire-keys.json
+auth-objects.json
+oauth-info.json
+oauth-props.json
+storage-keys.json
+window-auth-keys.json
+pa-network.txt
+pa_*_headers.txt
+pa_*_body.json
+pa_*_response.json
+pa_callback_*.json
+patch*.json
+patch*.b64
+patch-result.json
+part_number_stuck.png

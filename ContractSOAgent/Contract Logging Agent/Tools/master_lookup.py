@@ -310,4 +310,6 @@ def _lookup_env_for_division(division: str) -> str:
         return "GL_MASTER_LOOKUP_URL"
     if division == "PPGI":
         return "PPGI_MASTER_LOOKUP_URL"
+    if division == "PPGL":
+        return "PPGL_MASTER_LOOKUP_URL"
     return "HRC_MASTER_LOOKUP_URL"

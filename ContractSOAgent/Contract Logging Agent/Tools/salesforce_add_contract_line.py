@@ -37,6 +37,22 @@ PLANT_NAME_BY_CODE = {
 }
 
 
+def _pause_debug_fields() -> set[str]:
+    raw = os.getenv("PLAYWRIGHT_PAUSE_FIELDS", "")
+    return {
+        str(item or "").strip().lower()
+        for item in raw.split(",")
+        if str(item or "").strip()
+    }
+
+
+def _maybe_pause_for_field_debug(page, label: str) -> None:
+    if str(label or "").strip().lower() not in _pause_debug_fields():
+        return
+    log.info("Pausing Playwright Inspector at field '%s'", label)
+    page.pause()
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -466,6 +482,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
         _screenshot(page, "14b_supply_plant")
 
     # GI/ZM required fields.
+    _maybe_pause_for_field_debug(page, "S Brand")
     _fill_lookup_text_by_label(page, "S Brand", data.get("s_brand", ""))
     page.wait_for_timeout(800)
     _screenshot(page, "14c_s_brand")
@@ -480,11 +497,16 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     page.wait_for_timeout(1_000)
     _screenshot(page, "16_thickness")
 
-    # Length is optional for this flow; skip by design.
+    # Length is required for sheet variants and optional/blank for coil variants.
+    _fill_input_by_label(page, "Length", data.get("length", ""))
+    page.wait_for_timeout(800)
+    _screenshot(page, "16a_length")
 
     # 12. Edge Condition — LWC combobox
     if division == "GL":
         _fill_gl_specific_fields(page, data)
+    elif division in {"PPGI", "PPGL"}:
+        _fill_ppgi_ppgl_specific_fields(page, data)
     else:
         _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
         page.wait_for_timeout(1_000)
@@ -522,7 +544,7 @@ def _fill_contract_line(page, data: dict, contract_number: str = "", baseline_li
     # 13. S Plant — required for some HRC variants.
     # CRCA flow already maps/uses Supply Plant / Depot and forcing S Plant causes flaky overlay issues.
     if plant_raw and division != "CRCA":
-        _select_s_plant(page, plant_code, plant_raw)
+        _select_s_plant_v2(page, plant_code, plant_raw)
         page.wait_for_timeout(1_500)
         _screenshot(page, "17b_s_plant")
 
@@ -561,6 +583,50 @@ def _fill_gl_specific_fields(page, data: dict) -> None:
     _select_gl_recorded_picklist(page, "Spangle Type", data.get("spangle_type", ""))
     page.wait_for_timeout(500)
     _screenshot(page, "16e_spangle_type")
+
+
+def _fill_ppgi_ppgl_specific_fields(page, data: dict) -> None:
+    """Fill PPGI/PPGL coating, film, colour, and tolerance fields."""
+    division = str(data.get("division", "")).strip().upper()
+
+    _select_lwc_combobox(page, "Thickness Tolerance Type", data.get("thick_tol_type", ""))
+    page.wait_for_timeout(600)
+    _screenshot(page, "16c_thick_tol_type")
+
+    _maybe_pause_for_field_debug(page, "Tolerance Type")
+    _select_lwc_combobox(page, "Tolerance Type", data.get("tolerance_type", ""))
+    page.wait_for_timeout(600)
+    _screenshot(page, "16d_tolerance_type")
+
+    if division == "PPGL":
+        _select_lwc_combobox(page, "S WIDTH TOL TYPE", data.get("width_tol_type", ""))
+        page.wait_for_timeout(600)
+        _screenshot(page, "16e_width_tol_type")
+
+        _fill_gl_coating_min(page, data.get("al_zn_coating_min", ""))
+        page.wait_for_timeout(500)
+        _screenshot(page, "16f_al_zn_coating_min")
+    else:
+        _fill_input_by_label(page, "Zin_Coating Min(GSM)", data.get("zinc_coating_min", ""))
+        page.wait_for_timeout(500)
+        _screenshot(page, "16f_zinc_coating_min")
+
+    _scroll_contract_line_form(page, 650)
+    page.wait_for_timeout(500)
+    _screenshot(page, "16g_ppgi_ppgl_scroll")
+
+    _select_lwc_combobox(page, "Guard Film Required", _normalise_guard_film_picklist(data.get("guard_film_required", "")))
+    page.wait_for_timeout(600)
+    _screenshot(page, "16h_guard_film_required")
+
+    _fill_text_or_lookup_by_label(page, "Top Color Code", data.get("top_color_code", ""))
+    page.wait_for_timeout(600)
+    _screenshot(page, "16i_top_color_code")
+
+    if division == "PPGL":
+        _select_gl_recorded_picklist(page, "Sleeve Required?", _normalise_yes_no_picklist(data.get("sleeve_required", "")))
+        page.wait_for_timeout(600)
+        _screenshot(page, "17a_sleeve_required")
 
 
 # ---------------------------------------------------------------------------
@@ -665,20 +731,37 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
             log.info("  selected via recorded GI picklist flow")
             return
 
-    if _select_nearest_native_select(page, label, value):
+    if label == "Tolerance Type":
+        try:
+            combo = page.get_by_role("combobox", name=re.compile(r"^Tolerance Type$", re.IGNORECASE)).first
+            combo.scroll_into_view_if_needed(timeout=3_000)
+            combo.click(timeout=3_000)
+            page.wait_for_timeout(300)
+            page.locator("span").filter(
+                has_text=re.compile(rf"^\s*{re.escape(str(value))}\s*$", re.IGNORECASE)
+            ).first.click(timeout=4_000)
+            page.wait_for_timeout(400)
+            current = _field_current_value(page, label)
+            if str(current).strip().upper() == str(value).strip().upper():
+                log.info("  selected via recorded Tolerance Type span option")
+                return
+        except Exception:
+            pass
+
+    if _select_nearest_native_select(page, label, value) and _field_contains_value(page, label, value):
         log.info("  selected via nearest native <select>")
         return
 
-    if _select_combobox_near_label(page, label, value):
+    if _select_combobox_near_label(page, label, value) and _field_contains_value(page, label, value):
         log.info("  selected via label-scoped combobox")
         return
 
     if label in {"Oil Required", "Edge Condition", "Spangle Type"}:
-        if _select_exact_field_picklist(page, label, value):
+        if _select_exact_field_picklist(page, label, value) and _field_contains_value(page, label, value):
             log.info("  selected via exact field container")
             return
 
-    if _select_combobox_by_coordinates(page, label, value):
+    if _select_combobox_by_coordinates(page, label, value) and _field_contains_value(page, label, value):
         log.info("  selected via coordinate-scoped combobox")
         return
 
@@ -707,7 +790,7 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
             }""",
             {"labelText": label, "val": value},
         )
-        if selected:
+        if selected and _field_contains_value(page, label, value):
             log.info("  selected via row-level native <select>")
             return
     except Exception:
@@ -722,8 +805,10 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
             loc = page.locator(sel).first
             if loc.is_visible(timeout=800):
                 loc.select_option(label=value)
-                log.info("  selected via <select> aria-label")
-                return
+                page.wait_for_timeout(300)
+                if _field_contains_value(page, label, value):
+                    log.info("  selected via <select> aria-label")
+                    return
         except Exception:
             pass
 
@@ -735,8 +820,10 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
             sel_el = page.locator(f'select#{for_id}')
             if sel_el.count() > 0 and sel_el.first.is_visible(timeout=800):
                 sel_el.first.select_option(label=value)
-                log.info("  selected via label[for] -> <select>")
-                return
+                page.wait_for_timeout(300)
+                if _field_contains_value(page, label, value):
+                    log.info("  selected via label[for] -> <select>")
+                    return
     except Exception:
         pass
 
@@ -753,8 +840,10 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
                 btn.click(timeout=3_000)
                 page.wait_for_timeout(800)
                 _click_dropdown_option(page, value)
-                log.info("  selected via LWC button: %s", btn_sel)
-                return
+                page.wait_for_timeout(400)
+                if _field_contains_value(page, label, value):
+                    log.info("  selected via LWC button: %s", btn_sel)
+                    return
         except Exception:
             pass
 
@@ -764,14 +853,34 @@ def _select_lwc_combobox(page, label: str, value: str) -> None:
         sel = label_el.locator('xpath=following-sibling::*/descendant::select | following::select[1]')
         if sel.is_visible(timeout=800):
             sel.select_option(label=value)
-            log.info("  selected via label sibling <select>")
-            return
+            page.wait_for_timeout(300)
+            if _field_contains_value(page, label, value):
+                log.info("  selected via label sibling <select>")
+                return
     except Exception:
         pass
 
-    if _select_nearest_native_select(page, label, value):
+    if _select_nearest_native_select(page, label, value) and _field_contains_value(page, label, value):
         log.info("  selected via nearest native <select>")
         return
+
+    if label == "Tolerance Type":
+        try:
+            combo = page.get_by_role("combobox", name=re.compile(r"^Tolerance Type$", re.IGNORECASE)).first
+            combo.scroll_into_view_if_needed(timeout=3_000)
+            combo.click(timeout=3_000)
+            page.wait_for_timeout(300)
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(200)
+            page.keyboard.type(str(value), delay=40)
+            page.wait_for_timeout(200)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(400)
+            if _field_contains_value(page, label, value):
+                log.info("  selected via Tolerance Type keyboard fallback")
+                return
+        except Exception:
+            pass
 
     log.warning("  could not select combobox '%s' = '%s'", label, value)
 
@@ -1596,6 +1705,15 @@ def _normalise_yes_no_picklist(value: str) -> str:
     return text
 
 
+def _normalise_guard_film_picklist(value: str) -> str:
+    text = str(value or "").strip()
+    if text.upper() == "YES":
+        return "Y"
+    if text.upper() == "NO":
+        return "N"
+    return text
+
+
 def _close_open_dropdown(page) -> None:
     try:
         page.keyboard.press("Escape")
@@ -1665,6 +1783,11 @@ def _open_combobox_in_field_container(page, label: str) -> bool:
 
 
 def _field_contains_value(page, label: str, expected: str) -> bool:
+    current = _field_current_value(page, label)
+    return str(expected or "").strip().lower() in str(current or "").strip().lower()
+
+
+def _field_current_value(page, label: str) -> str:
     try:
         text = page.evaluate(
             """(labelText) => {
@@ -1693,9 +1816,9 @@ def _field_contains_value(page, label: str, expected: str) -> bool:
             }""",
             label,
         )
-        return str(expected or "").strip().lower() in str(text or "").strip().lower()
+        return str(text or "").strip()
     except Exception:
-        return False
+        return ""
 
 
 def _field_has_any_value(page, label: str) -> bool:
@@ -2138,6 +2261,116 @@ def _select_s_plant(page, plant_code: str, plant_raw: str = "") -> None:
     log.warning("  could not select S Plant for keyword '%s'", keyword)
 
 
+def _select_s_plant_v2(page, plant_code: str, plant_raw: str = "") -> None:
+    """Select S Plant using code/name-aware fallbacks shared with other combobox helpers."""
+    if not plant_raw and not plant_code:
+        return
+
+    plant_raw = str(plant_raw or "").strip()
+    plant_code = str(plant_code or "").strip()
+    log.info("Selecting S Plant v2 for: '%s'", plant_raw or plant_code)
+
+    parts = re.split(r'\s*-\s*', plant_raw, maxsplit=1)
+    plant_name = parts[1].strip() if len(parts) > 1 else plant_raw.strip()
+    keyword = plant_name.split()[0] if plant_name else ""
+    candidates = []
+    for item in [plant_code, plant_raw, plant_name, keyword]:
+        text = str(item or "").strip()
+        if text and text not in candidates:
+            candidates.append(text)
+    log.info("  S Plant v2 candidates: %s", candidates)
+
+    try:
+        page.locator('text=Plant Description').first.scroll_into_view_if_needed(timeout=3_000)
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+    try:
+        combo = page.get_by_role("combobox", name=re.compile(r"^S Plant$", re.IGNORECASE)).first
+        combo.scroll_into_view_if_needed(timeout=3_000)
+        combo.click(timeout=3_000)
+        page.wait_for_timeout(300)
+        page.locator("span").filter(has_text=re.compile(r"Kalmeshwar Works", re.IGNORECASE)).first.click(timeout=4_000)
+        page.wait_for_timeout(400)
+        if _field_contains_value(page, "S Plant", "Kalmeshwar Works"):
+            log.info("  S Plant selected via recorded Kalmeshwar Works option")
+            return
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        try:
+            if _select_combobox_role_value(page, "S Plant", candidate):
+                log.info("  S Plant selected via combobox role: '%s'", candidate)
+                return
+        except Exception:
+            pass
+        try:
+            if _select_exact_field_picklist(page, "S Plant", candidate):
+                log.info("  S Plant selected via exact field picklist: '%s'", candidate)
+                return
+        except Exception:
+            pass
+        try:
+            if _select_combobox_near_label(page, "S Plant", candidate):
+                log.info("  S Plant selected via nearby label combobox: '%s'", candidate)
+                return
+        except Exception:
+            pass
+        try:
+            if _select_combobox_by_coordinates(page, "S Plant", candidate):
+                log.info("  S Plant selected via coordinate fallback: '%s'", candidate)
+                return
+        except Exception:
+            pass
+
+    for btn_sel in ['button[aria-label="S Plant"]', 'button[aria-label*="S Plant"]']:
+        try:
+            btn = page.locator(btn_sel).first
+            if not btn.is_visible(timeout=1_500):
+                continue
+            btn.scroll_into_view_if_needed()
+            btn.click(timeout=3_000)
+            page.wait_for_timeout(800)
+            for candidate in candidates:
+                for sel in ['[role="option"]', 'lightning-base-combobox-item', '.slds-listbox__item']:
+                    try:
+                        page.locator(sel).filter(
+                            has_text=re.compile(re.escape(candidate), re.IGNORECASE)
+                        ).first.click(timeout=5_000)
+                        log.info("  S Plant selected from dropdown: '%s'", candidate)
+                        return
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    for sel in ['select[aria-label="S Plant"]', 'select[aria-label*="S Plant"]']:
+        try:
+            loc = page.locator(sel).first
+            if not loc.is_visible(timeout=800):
+                continue
+            options = loc.locator('option').all_inner_texts()
+            match = next(
+                (
+                    o for o in options
+                    if any(candidate.lower() in o.lower() for candidate in candidates)
+                ),
+                None,
+            )
+            if not match:
+                match = next((o for o in options if o.strip() and "--None--" not in o), None)
+            if match:
+                loc.select_option(label=match)
+                log.info("  S Plant selected via <select>: '%s'", match)
+                return
+        except Exception:
+            pass
+
+    log.warning("  S Plant v2 could not select any candidate: %s", candidates)
+
+
 def _fill_input_by_label(page, label: str, value: str) -> None:
     """Fill a plain text/number input strictly by its label."""
     if not value:
@@ -2224,12 +2457,70 @@ def _fill_gl_coating_min(page, value: str) -> None:
     log.warning("  could not fill GL AL ZN coating minimum")
 
 
+def _fill_text_or_lookup_by_label(page, label: str, value: str) -> None:
+    """Fill a plain input when present; otherwise try lookup-style selection."""
+    if not value:
+        return
+    if label.strip().lower() == "top color code":
+        try:
+            combo = page.get_by_role("combobox", name=re.compile(r"^Top Color Code$", re.IGNORECASE)).first
+            combo.scroll_into_view_if_needed(timeout=3_000)
+            combo.click(timeout=3_000)
+            page.wait_for_timeout(300)
+            combo.fill(str(value).strip())
+            page.wait_for_timeout(500)
+            for selector in [
+                '[role="option"]',
+                'lightning-base-combobox-item',
+                '.slds-listbox__item',
+                '.slds-listbox__option',
+                'span.slds-truncate',
+            ]:
+                try:
+                    option = page.locator(selector).filter(has_text=re.compile(r".+", re.IGNORECASE)).first
+                    option.click(timeout=4_000)
+                    break
+                except Exception:
+                    continue
+            page.wait_for_timeout(500)
+            current = _field_current_value(page, label)
+            if str(current).strip():
+                log.info("  filled %s via top search-result selection", label)
+                return
+        except Exception:
+            pass
+    try:
+        inp = _input_by_label(page, label)
+        if inp is not None:
+            inp.scroll_into_view_if_needed(timeout=3_000)
+            inp.click(timeout=3_000, force=True)
+            inp.fill(str(value))
+            log.info("  filled %s via label-scoped input", label)
+            return
+    except Exception:
+        pass
+    _fill_lookup_text_by_label(page, label, value)
+
+
 def _fill_lookup_text_by_label(page, label: str, value: str) -> None:
     """Fill a lookup-style text field by label and select the matching/first result."""
     if not value:
         return
     log.info("Filling lookup '%s' = '%s'", label, value)
     try:
+        if label.strip().lower() == "s brand":
+            brand_box = page.get_by_role("textbox", name=re.compile(r"Select Brand", re.IGNORECASE)).first
+            brand_box.scroll_into_view_if_needed(timeout=4_000)
+            brand_box.click(timeout=4_000, force=True)
+            page.wait_for_timeout(300)
+            page.locator("span").filter(
+                has_text=re.compile(rf"^\s*{re.escape(str(value))}\s*$", re.IGNORECASE)
+            ).first.click(timeout=4_000)
+            page.wait_for_timeout(500)
+            if _field_contains_value(page, label, value) or _field_has_any_value(page, label):
+                log.info("  lookup '%s' committed via recorded brand option", label)
+                return
+
         inp = _input_by_label(page, label)
         if inp is None:
             if label.strip().lower() == "s brand":
@@ -2247,10 +2538,15 @@ def _fill_lookup_text_by_label(page, label: str, value: str) -> None:
             ).first.click(timeout=4_000, force=True)
         except Exception:
             try:
+                page.keyboard.press("ArrowDown")
+                page.wait_for_timeout(200)
                 page.keyboard.press("Enter")
             except Exception:
                 pass
         page.wait_for_timeout(800)
+        if _field_contains_value(page, label, value) or _field_has_any_value(page, label):
+            log.info("  lookup '%s' committed value after suggestion select", label)
+            return
     except Exception as exc:
         log.warning("  could not fill lookup '%s': %s", label, exc)
 
@@ -2325,6 +2621,10 @@ def _save(page, contract_number: str = "", baseline_line: str = "") -> str:
         _screenshot(page, "19_after_save")
         save_error = _extract_save_error(page)
         if save_error:
+            if save_error.strip().lower() == "complete this field.":
+                diagnostics = _after_save_diagnostics(page)
+                if diagnostics:
+                    save_error = f"{save_error} {diagnostics}"
             log.warning("Save was rejected by Salesforce: %s", save_error)
             raise RuntimeError(save_error)
         log.info("Saved. URL: %s", page.url)
@@ -2564,7 +2864,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--sample",
-        choices=["hrc", "crca-coil", "crca-sheet"],
+        choices=["hrc", "crca-coil", "crca-sheet", "ppgi-coil", "ppgi-sheet", "ppgl-coil", "ppgl-sheet"],
         default="hrc",
         help="Sample line data to use in create-line mode",
     )
@@ -2626,6 +2926,96 @@ if __name__ == "__main__":
             "edge_con":                "",
             "thick_tol_type":          "BILATERAL",
             "oil_req":                 "Y",
+        },
+        "ppgi-coil": {
+            "division":                "PPGI",
+            "sku_description":         "0.50X1220-PPGI-TEST",
+            "product_name":            "PPGI Coil - (S_PPGICF)",
+            "customer_order_category": "STD",
+            "eq_specif_grp":           "BIS",
+            "eq_specifi":              "14246_2013",
+            "eq_sub_grade":            "PPGI",
+            "end_appn":                "GE",
+            "order_qty":               "10",
+            "plant_code":              "1044 - JSCPL - DHAR",
+            "cust_req_date":           "06/08/2026",
+            "s_brand":                 "JSW",
+            "width":                   "1220.000",
+            "thickness":               "0.500",
+            "length":                  "",
+            "thick_tol_type":          "TCTMAX",
+            "tolerance_type":          "N",
+            "zinc_coating_min":        "120",
+            "guard_film_required":     "N",
+            "top_color_code":          "RAL9002",
+        },
+        "ppgi-sheet": {
+            "division":                "PPGI",
+            "sku_description":         "0.50X1220X2500-PPGI-TEST",
+            "product_name":            "PPGI Sheet - (S_PPGISF)",
+            "customer_order_category": "STD",
+            "eq_specif_grp":           "BIS",
+            "eq_specifi":              "14246_2013",
+            "eq_sub_grade":            "PPGI",
+            "end_appn":                "GE",
+            "order_qty":               "10",
+            "plant_code":              "1044 - JSCPL - DHAR",
+            "cust_req_date":           "06/08/2026",
+            "s_brand":                 "JSW",
+            "width":                   "1220.000",
+            "thickness":               "0.500",
+            "length":                  "2500.000",
+            "thick_tol_type":          "TCTMAX",
+            "tolerance_type":          "N",
+            "zinc_coating_min":        "120",
+            "guard_film_required":     "N",
+            "top_color_code":          "RAL9002",
+        },
+        "ppgl-coil": {
+            "division":                "PPGL",
+            "sku_description":         "0.50X1220-PPGL-TEST",
+            "product_name":            "PPGL Coil - (S_PPGLCF)",
+            "customer_order_category": "STD",
+            "eq_specif_grp":           "BIS",
+            "eq_specifi":              "15965_2012",
+            "eq_sub_grade":            "PPGL",
+            "end_appn":                "GE",
+            "order_qty":               "10",
+            "plant_code":              "1044 - JSCPL - DHAR",
+            "cust_req_date":           "06/08/2026",
+            "s_brand":                 "JSW",
+            "width":                   "1220.000",
+            "thickness":               "0.500",
+            "length":                  "",
+            "thick_tol_type":          "TCTMAX",
+            "guard_film_required":     "N",
+            "width_tol_type":          "N",
+            "tolerance_type":          "N",
+            "top_color_code":          "RAL9002",
+            "sleeve_required":         "N",
+            "al_zn_coating_min":       "150",
+        },
+        "ppgl-sheet": {
+            "division":                "PPGL",
+            "sku_description":         "0.50X1220X2500-PPGL-TEST",
+            "product_name":            "PPGL Sheet - (S_PPGLSF)",
+            "customer_order_category": "STD",
+            "eq_specif_grp":           "BIS",
+            "eq_specifi":              "15965_2012",
+            "eq_sub_grade":            "PPGL",
+            "end_appn":                "GE",
+            "order_qty":               "10",
+            "plant_code":              "1044 - JSCPL - DHAR",
+            "cust_req_date":           "06/08/2026",
+            "s_brand":                 "JSW",
+            "width":                   "1220.000",
+            "thickness":               "0.500",
+            "length":                  "2500.000",
+            "thick_tol_type":          "TCTMAX",
+            "al_zn_coating_min":       "150",
+            "tolerance_type":          "N",
+            "guard_film_required":     "N",
+            "top_color_code":          "RAL9002",
         },
     }
     test_data = samples[args.sample]
